@@ -1,4 +1,5 @@
 import base64
+import difflib
 import io
 import json
 import re
@@ -13,9 +14,7 @@ st.set_page_config(
 )
 
 st.title("📝 Grit Red Circle Project")
-st.write(
-    "Made by 열라 쩌는 Jason쌤"
-)
+st.write("Made by 열라 쩌는 Jason쌤")
 
 st.sidebar.header("🔑 설정")
 
@@ -27,9 +26,7 @@ else:
     api_key = st.sidebar.text_input("OpenAI API Key 입력", type="password")
 
 st.markdown("### 1단계: 교재 정답지 엑셀 파일 업로드")
-st.info(
-    "💡 엑셀 형식: **1열 = 문항 번호**, **2열 = 정답 단어/문장** (첫 번째 시트)"
-)
+st.info("💡 엑셀 형식: **1열 = 문항 번호**, **2열 = 정답 단어/문장** (첫 번째 시트)")
 answer_file = st.file_uploader("정답지 엑셀 (.xlsx) 파일 선택", type=["xlsx"])
 
 st.markdown("### 2단계: 답안지 사진 업로드")
@@ -80,6 +77,48 @@ def evaluate_answer(student_ans: str, correct_ans: str) -> tuple[bool, str]:
         return False, "철자 불일치"
 
 
+def generate_diff_html(student_ans: str, correct_ans: str) -> str:
+    """
+    학생 답안과 정답을 글자 단위로 비교하여 HTML 스트링을 생성합니다.
+    - 틀린 철자/잘못 적은 단어: 빨간색 알파벳
+    - 빠뜨리거나 미응답인 부분: 빠진 철자 수만큼 빨간색 물음표(?)
+    """
+    if not student_ans or student_ans in ["미응답", "(미응답)"]:
+        # 아예 안 썼을 경우 정답 길이나 1개 이상의 빨간색 물음표 표시
+        missing_length = max(len(correct_ans.strip()), 1)
+        return f'{"?" * missing_length}'
+
+    diff = list(difflib.ndiff(correct_ans, student_ans))
+    html_result = ""
+    i = 0
+
+    while i < len(diff):
+        code, val = diff[i][0], diff[i][2]
+
+        if code == ' ':
+            # 정답과 학생 답안이 일치하는 글자
+            html_result += val
+            i += 1
+        elif code == '-':
+            # 정답에만 있고 학생 답안에 없음 -> 누락된 글자 수만큼 빨간색 물음표(?)
+            missing_count = 0
+            while i < len(diff) and diff[i][0] == '-':
+                missing_count += 1
+                i += 1
+            html_result += f'{"?" * missing_count}'
+        elif code == '+':
+            # 학생이 오타를 내거나 잘못 적은 글자 -> 빨간색 강조
+            wrong_chars = ""
+            while i < len(diff) and diff[i][0] == '+':
+                wrong_chars += diff[i][2]
+                i += 1
+            html_result += f'{wrong_chars}'
+        else:
+            i += 1
+
+    return html_result
+
+
 # ---------------------------------------------------------
 # 업로드된 사진 미리보기 영역 (파일명 규칙 없음)
 # ---------------------------------------------------------
@@ -93,7 +132,6 @@ if student_photos:
         for idx, photo in enumerate(student_photos):
             with cols[idx % 3]:
                 img = Image.open(photo)
-                # use_column_width=True -> use_container_width=True 수정 완료
                 st.image(
                     img,
                     caption=f"파일: {photo.name}",
@@ -126,11 +164,8 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
 
             client = OpenAI(api_key=api_key)
 
-            # 학생별 결과를 담을 임시 딕셔너리
-            # { "학생이름": [ {문항결과들...}, ... ] }
             student_results_map = {}
 
-            # 각 사진을 개별 분석하여 학생 이름 자동 인식 후 결과 수집
             for idx, photo in enumerate(student_photos):
                 st.markdown(
                     f"--- 📄 **[진행 중 ({idx+1}/{len(student_photos)})]** `{photo.name}` 분석 및 학생 식별 중..."
@@ -191,16 +226,23 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                 if detected_name not in student_results_map:
                     student_results_map[detected_name] = []
 
-                # 해당 사진의 채점 세부 내역 정규화 평가 후 저장
                 for detail in result.get("details", []):
                     s_ans = str(detail.get("student_answer", "")).strip()
                     c_ans = str(detail.get("correct_answer", "")).strip()
 
                     is_correct, reason = evaluate_answer(s_ans, c_ans)
 
+                    # 오답인 경우 시각화 HTML 생성
+                    visualized_html = (
+                        generate_diff_html(s_ans, c_ans)
+                        if not is_correct
+                        else s_ans
+                    )
+
                     student_results_map[detected_name].append({
                         "문항 번호": detail.get("number", ""),
-                        "학생 작성 답안 (오답)": s_ans,
+                        "학생 작성 답안": s_ans,
+                        "오답 분석 (대조)": visualized_html,
                         "교재 정답": c_ans,
                         "정오답": is_correct,
                         "파일명": photo.name,
@@ -221,8 +263,9 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                 wrong_details = [
                     {
                         "문항 번호": r["문항 번호"],
-                        "학생 작성 답안 (오답)": r["학생 작성 답안 (오답)"],
+                        "오답 분석 (대조)": r["오답 분석 (대조)"],
                         "교재 정답": r["교재 정답"],
+                        "원본 학생 답안": r["학생 작성 답안"],
                         "파일명": r["파일명"],
                     }
                     for r in records
@@ -236,11 +279,29 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
 
                 if wrong_details:
                     df_wrong = pd.DataFrame(wrong_details)
-                    st.dataframe(df_wrong, use_container_width=True)
+                    
+                    # Streamlit 화면 출력 시 HTML 색상이 정상적으로 적용되도록 to_html(unsafe_allow_html=True) 사용
+                    df_display = df_wrong[["문항 번호", "오답 분석 (대조)", "교재 정답", "파일명"]]
+                    st.write(
+                        df_display.to_html(escape=False, index=False),
+                        unsafe_allow_html=True
+                    )
+                    st.write("")  # 여백 추가
 
-                    csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
+                    # CSV 다운로드용 데이터 (HTML 태그 제거 버전)
+                    clean_wrong_details = []
+                    for w in wrong_details:
+                        clean_wrong_details.append({
+                            "문항 번호": w["문항 번호"],
+                            "학생 작성 답안": w["원본 학생 답안"],
+                            "교재 정답": w["교재 정답"],
+                            "파일명": w["파일명"],
+                        })
+                    df_csv = pd.DataFrame(clean_wrong_details)
+                    csv_data = df_csv.to_csv(index=False).encode("utf-8-sig")
+
                     st.download_button(
-                        label=f"📥 {s_name}_오답노트 다운로드",
+                        label=f"📥 {s_name}_오답노트 다운로드 (CSV)",
                         data=csv_data,
                         file_name=f"오답노트_{s_name}.csv",
                         mime="text/csv",
