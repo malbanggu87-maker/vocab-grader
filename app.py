@@ -6,8 +6,8 @@ import base64
 
 st.set_page_config(page_title="영단어 시험 자동 채점", page_icon="📝", layout="centered")
 
-st.title("📝 영단어 시험 자동 채점 프로그램")
-st.write("갤럭시 S25로 찍은 답안지 사진과 엑셀 정답지를 업로드하면 교재 단어 기준에 맞춰 채점합니다.")
+st.title("📝 Grit영어학원 자동채점 프로그램")
+st.write("시험지 사진과 엑셀 정답지를 업로드하면 교재 단어 기준에 맞춰 채점합니다.")
 
 st.sidebar.header("🔑 설정")
 
