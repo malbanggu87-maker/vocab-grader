@@ -4,10 +4,10 @@ from openai import OpenAI
 import json
 import base64
 
-st.set_page_config(page_title="영단어 시험 자동 채점", page_icon="📝", layout="centered")
+st.set_page_config(page_title="영단어/문장 자동 채점", page_icon="📝", layout="centered")
 
-st.title("📝 영단어 시험 자동 채점 프로그램")
-st.write("갤럭시 S25로 찍은 답안지 사진과 엑셀 정답지를 업로드하면 교재 단어 기준에 맞춰 채점합니다.")
+st.title("📝 영단어 및 빈칸 채우기 자동 채점 프로그램")
+st.write("갤럭시 S25로 찍은 답안지 사진과 엑셀 정답지를 업로드하면 교재 단어/문장 기준에 맞춰 정밀 채점합니다.")
 
 st.sidebar.header("🔑 설정")
 
@@ -51,20 +51,26 @@ if st.button("🚀 채점 시작하기", type="primary"):
                 bytes_data = photo.getvalue()
                 base64_image = base64.b64encode(bytes_data).decode('utf-8')
                 
-                # 정밀 채점을 위한 프롬프트
+                # 밑줄 인식 및 유형별 정밀 채점 프롬프트
                 prompt = f'''
-                당신은 꼼꼼한 영단어 시험 채점 보조원입니다. 
-                첨부된 사진의 학생 답안지에서 각 문항의 알파벳 손글씨 철자를 선명하고 주의 깊게 읽은 후, 교재 정답지와 대조하여 채점하세요.
-                
+                당신은 꼼꼼한 영어 시험지 전문 채점 보조원입니다. 
+                첨부된 사진에는 두 가지 형태의 문항이 포함되어 있을 수 있습니다:
+                1. [단어형]: 한글 단어 옆에 학생이 영어 단어를 적는 형태
+                2. [문장 빈칸형]: 영어 문장 중간중간 밑줄(___)이 그어져 있고, 밑줄 위에 학생이 영단어를 채워 넣은 형태
+
+                [이미지 판독 필수 규칙]
+                - 문장 빈칸형 문제의 경우, **인쇄된 문장 텍스트가 아닌 '밑줄 바로 위'에 학생이 손글씨로 적은 글자만 정확히 인식**하세요.
+                - 밑줄 아래나 다른 인쇄된 텍스트와 헷갈리지 않도록 visual alignment를 주의 깊게 확인하세요.
+                - 손글씨 알파벳 하나하나의 철자(spelling)를 선명하고 주의 깊게 판독하세요.
+
                 [교재 정답지]
                 {formatted_answers}
-                
-                [채점 및 인식 규칙]
-                1. 사진 속 손글씨 알파벳 하나하나를 정밀하게 판독하세요.
-                2. 정답지와 철자가 완벽히 일치해야만 is_correct를 true로 설정하세요. (철자가 1글자라도 틀리면 false)
-                3. 대소문자는 구분하지 않습니다.
-                4. 학생 답안이 빈칸이거나 알아볼 수 없으면 student_answer에 "(미응답)"으로 작성하고 false 처리하세요.
-                
+
+                [채점 규칙]
+                1. 정답지와 학생이 밑줄 위에 적은 답안의 철자가 완벽히 일치해야만 is_correct를 true로 설정하세요. (1글자라도 틀리면 false)
+                2. 대소문자는 구분하지 않습니다.
+                3. 학생 답안이 빈칸이거나 알아볼 수 없으면 student_answer에 "(미응답)"으로 작성하고 false 처리하세요.
+
                 [JSON 응답 형식]
                 {{
                   "student_name": "학생 이름",
@@ -73,8 +79,8 @@ if st.button("🚀 채점 시작하기", type="primary"):
                   "details": [
                     {{
                       "number": "1",
-                      "student_answer": "학생 답",
-                      "correct_answer": "정답",
+                      "student_answer": "학생이 밑줄 위에 적은 답",
+                      "correct_answer": "정답지 상의 정답",
                       "is_correct": true
                     }}
                   ]
