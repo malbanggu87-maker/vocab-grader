@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점 프로그램")
+st.title("📝 인류 역사상 최고의 채점 프로그램")
 st.write(
     "Made by 열라 쩌는 Jason쌤"
 )
@@ -32,7 +32,7 @@ st.info(
 )
 answer_file = st.file_uploader("정답지 엑셀 (.xlsx) 파일 선택", type=["xlsx"])
 
-st.markdown("### 2단계: 스마트폰 촬영 답안지 사진 업로드")
+st.markdown("### 2단계: 답안지 사진 업로드")
 st.caption(
     "📌 파일명 규칙 필요 없음: 제출된 시험지 여러 장을 그대로 다중 선택하여 업로드하세요."
 )
