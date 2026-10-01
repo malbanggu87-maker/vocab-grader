@@ -24,7 +24,7 @@ answer_file = st.file_uploader("정답지 엑셀 (.xlsx) 파일 선택", type=["
 
 st.markdown("### 2단계: 학생 답안지 사진 업로드")
 student_photos = st.file_uploader(
-    "갤럭시 S25로 촬영한 답안지 사진 (다중 선택 가능)", 
+    "답안지 사진 (다중 선택 가능)", 
     type=["jpg", "jpeg", "png"], 
     accept_multiple_files=True
 )
