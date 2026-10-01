@@ -14,7 +14,7 @@ st.set_page_config(
 
 st.title("📝 Grit English 채점 프로그램")
 st.write(
-    "Made by Jason"
+    "Made by 열라 쩌는 Jason쌤"
 )
 
 st.sidebar.header("🔑 설정")
@@ -34,7 +34,7 @@ answer_file = st.file_uploader("정답지 엑셀 (.xlsx) 파일 선택", type=["
 
 st.markdown("### 2단계: 스마트폰 촬영 답안지 사진 업로드")
 st.caption(
-    "📌 파일명 규칙 필요 없음: 갤럭시로 찍은 원본 사진 여러 장을 그대로 다중 선택하여 업로드하세요."
+    "📌 파일명 규칙 필요 없음: 제출된 시험지 여러 장을 그대로 다중 선택하여 업로드하세요."
 )
 student_photos = st.file_uploader(
     "답안지 사진 업로드 (다중 선택 가능)",
@@ -105,7 +105,7 @@ if student_photos:
 # 채점 실행 버튼 영역
 # ---------------------------------------------------------
 st.markdown("---")
-if st.button("🚀 전체 채점 시작하기", type="primary", use_container_width=True):
+if st.button("🚀 채점을 조지십시요", type="primary", use_container_width=True):
     if not api_key or not answer_file or not student_photos:
         st.error(
             "API 키, 정답지 엑셀 파일, 학생 답안지 사진을 모두 확인해 주세요."
