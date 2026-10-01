@@ -8,10 +8,10 @@ import io
 import re
 import unicodedata
 
-st.set_page_config(page_title="영단어/문장 자동 채점", page_icon="📝", layout="centered")
+st.set_page_config(page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered")
 
-st.title("📝 영단어 및 문장 자동 채점 (어린이 악필/옅은 필적 관대 판독)")
-st.write("어린 학생들의 날려 쓴 글씨, 힘없이 적은 옅은 필적, 일부 지워진 자국까지 작성 의도를 고려하여 정교하게 판독합니다.")
+st.title("📝 영단어 및 문장 자동 채점 (오답 집중 모드)")
+st.write("학생이 틀린 문항만 직관적으로 추출하여 오답과 교재 정답을 한눈에 비교할 수 있도록 보여줍니다.")
 
 st.sidebar.header("🔑 설정")
 
@@ -69,7 +69,7 @@ def evaluate_answer(student_ans: str, correct_ans: str) -> tuple[bool, str]:
         return False, "미응답 또는 인식 불가"
     
     if norm_student == norm_correct:
-        return True, "정답 (대소문자/문장부호/띄어쓰기 예외 및 필적 구제 적용)"
+        return True, "정답"
     else:
         return False, "철자 불일치"
 
@@ -88,19 +88,19 @@ if st.button("🚀 채점 시작하기", type="primary"):
             client = OpenAI(api_key=api_key)
             
             for photo in student_photos:
-                st.markdown(f"--- 📄 **[진행 중]** {photo.name} 이미지 최적화 및 채점 중...")
+                st.markdown(f"--- 📄 **[진행 중]** {photo.name} 분석 및 오답 추출 중...")
                 
                 # 이미지 압축 (비용 절감)
                 base64_image = compress_and_encode_image(photo, max_size=1200)
                 
-                # 어린이 악필 및 옅은 글씨 고려가 추가된 정밀 프롬프트
+                # 정밀 프롬프트
                 prompt = f'''
                 당신은 어린 초등학생/중학생의 영단어 및 문장 시험지를 채점하는 따뜻하고 꼼꼼한 전문 채점 선생님입니다. 
                 첨부된 사진에는 두 가지 형태의 문항이 포함되어 있습니다:
                 1. [단어형]: 한글 단어 옆에 학생이 영어 단어를 적는 형태
                 2. [문장/구 빈칸형]: 영어 문장 중간에 밑줄(___)이 그어져 있고, 밑줄 위에 학생이 영단어/문장을 채워 넣은 형태
 
-                [어린이 필적 판독 및 관대 평가 핵심 규칙 - 매우 중요!]
+                [어린이 필적 판독 및 관대 평가 핵심 규칙]
                 1. **옅은 연필 자국 및 부분 훼손 글자 구제**:
                    - 어린 학생들이 힘없이 써서 매우 옅거나 흐릿하게 보이는 글자도 주의 깊게 살펴 읽어내세요.
                    - 다른 빈칸을 지우다가 함께 연하게 지워진 필적이라도 정답 단어의 형태가 남아있다면 학생이 적은 답으로 인정하세요.
@@ -149,9 +149,10 @@ if st.button("🚀 채점 시작하기", type="primary"):
                 
                 result = json.loads(response.choices[0].message.content)
                 
-                # 파이썬 정규화 코드를 통한 2차 검증 및 채점 실행
-                final_details = []
+                # 파이썬 정규화 코드를 통한 오답만 추출 및 정리
+                wrong_details = []
                 correct_count = 0
+                total_q = len(result['details'])
                 
                 for item in result['details']:
                     s_ans = str(item.get('student_answer', '')).strip()
@@ -160,31 +161,37 @@ if st.button("🚀 채점 시작하기", type="primary"):
                     is_correct, reason = evaluate_answer(s_ans, c_ans)
                     if is_correct:
                         correct_count += 1
-                        
-                    final_details.append({
-                        "문항 번호": item.get('number', ''),
-                        "학생 답안": s_ans,
-                        "교재 정답": c_ans,
-                        "정답 여부": "⭕ 정답" if is_correct else "❌ 오답",
-                        "판정 비고": reason
-                    })
+                    else:
+                        # 오답 문항만 표출 리스트에 담기
+                        wrong_details.append({
+                            "문항 번호": item.get('number', ''),
+                            "학생 작성 답안 (오답)": s_ans,
+                            "교재 정답": c_ans
+                        })
                 
-                total_q = len(final_details)
                 student_name = result.get('student_name', '미상')
+                wrong_count = total_q - correct_count
                 
-                st.success(f"완료! 학생명: **{student_name}** | 점수: **{correct_count} / {total_q}점**")
+                st.success(f"완료! 학생명: **{student_name}** | 점수: **{correct_count} / {total_q}점** (틀린 문항: {wrong_count}개)")
                 
-                df_result = pd.DataFrame(final_details)
-                st.dataframe(df_result, use_container_width=True)
-                
-                # CSV 결과 다운로드 버튼
-                csv_data = df_result.to_csv(index=False).encode('utf-8-sig')
-                st.download_button(
-                    label=f"📥 {student_name}_채점결과 다운로드",
-                    data=csv_data,
-                    file_name=f"채점결과_{student_name}.csv",
-                    mime="text/csv",
-                    key=photo.name
-                )
+                # 틀린 문항 유무에 따른 간결 표출
+                if wrong_details:
+                    st.subheader("❌ 틀린 문항 비교 목록")
+                    df_wrong = pd.DataFrame(wrong_details)
+                    st.dataframe(df_wrong, use_container_width=True)
+                    
+                    # CSV 결과 다운로드 버튼 (오답 전용)
+                    csv_data = df_wrong.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button(
+                        label=f"📥 {student_name}_오답노트 다운로드",
+                        data=csv_data,
+                        file_name=f"오답노트_{student_name}.csv",
+                        mime="text/csv",
+                        key=photo.name
+                    )
+                else:
+                    st.balloons()
+                    st.info("🎉 **모든 문항을 맞혔습니다! 틀린 오답이 없습니다.**")
+
         except Exception as e:
             st.error(f"채점 중 오류가 발생했습니다: {e}")
