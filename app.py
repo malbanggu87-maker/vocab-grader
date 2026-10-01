@@ -34,9 +34,12 @@ if st.button("🚀 채점 시작하기", type="primary"):
         st.error("API 키, 정답지 엑셀 파일, 학생 사진을 모두 확인해주세요.")
     else:
         try:
-            # 엑셀 데이터 로드 및 간결한 형태로 변환
-            df_answers = pd.read_excel(answer_file)
-            answer_dict = dict(zip(df_answers.iloc[:, 0].astype(str), df_answers.iloc[:, 1].astype(str).str.strip()))
+            # 엑셀 데이터 안전하게 로드 (제목 행 무시 및 유연한 파싱)
+            df_answers = pd.read_excel(answer_file, header=None)
+            df_answers = df_answers.dropna(how='all') # 빈 행 제거
+            
+            # 첫 번째 열을 문항 번호, 두 번째 열을 정답으로 지정
+            answer_dict = dict(zip(df_answers.iloc[:, 0].astype(str).str.strip(), df_answers.iloc[:, 1].astype(str).str.strip()))
             formatted_answers = json.dumps(answer_dict, ensure_ascii=False)
             
             client = OpenAI(api_key=api_key)
@@ -78,7 +81,6 @@ if st.button("🚀 채점 시작하기", type="primary"):
                 }}
                 '''
                 
-                # 정확도 복구: detail: "high" 적용 (손글씨 정밀 판독)
                 response = client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[{
