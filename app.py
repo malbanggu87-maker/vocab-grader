@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점 프로그램")
+st.title("📝 Grit Red Circle Project")
 st.write(
     "Made by 열라 쩌는 Jason쌤"
 )
