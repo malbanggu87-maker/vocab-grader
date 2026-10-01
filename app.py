@@ -1,10 +1,8 @@
 import streamlit as st
 import pandas as pd
 from openai import OpenAI
-from PIL import Image
 import json
 import base64
-import io
 
 st.set_page_config(page_title="영단어 시험 자동 채점", page_icon="📝", layout="centered")
 
@@ -12,7 +10,8 @@ st.title("📝 영단어 시험 자동 채점 프로그램")
 st.write("갤럭시 S25로 찍은 답안지 사진과 엑셀 정답지를 업로드하면 교재 단어 기준에 맞춰 채점합니다.")
 
 st.sidebar.header("🔑 설정")
-# 비밀 저장소(Secrets)에서 API 키를 자동으로 가져오고, 없으면 입력창 표시
+
+# Secrets에 저장된 API 키가 있으면 자동으로 사용, 없으면 입력창 표시
 if "OPENAI_API_KEY" in st.secrets:
     api_key = st.secrets["OPENAI_API_KEY"]
     st.sidebar.success("✅ API 키가 저장되어 있습니다.")
@@ -35,33 +34,32 @@ if st.button("🚀 채점 시작하기", type="primary"):
         st.error("API 키, 정답지 엑셀 파일, 학생 사진을 모두 확인해주세요.")
     else:
         try:
-            # 엑셀 데이터 로드
+            # 엑셀 데이터 로드 및 간결한 형태로 변환 (토큰 절감)
             df_answers = pd.read_excel(answer_file)
             answer_dict = dict(zip(df_answers.iloc[:, 0].astype(str), df_answers.iloc[:, 1].astype(str).str.strip()))
-            formatted_answers = json.dumps(answer_dict, ensure_ascii=False, indent=2)
+            formatted_answers = json.dumps(answer_dict, ensure_ascii=False)
             
             client = OpenAI(api_key=api_key)
             
             for photo in student_photos:
                 st.markdown(f"--- 📄 **[진행 중]** {photo.name} 채점 중...")
                 
-                # 이미지 파일을 OpenAI가 읽을 수 있는 base64 형식으로 변환 (에러 해결 핵심 부분)
+                # 이미지 Base64 변환
                 bytes_data = photo.getvalue()
                 base64_image = base64.b64encode(bytes_data).decode('utf-8')
                 
+                # 토큰 소모를 줄인 경량화 프롬프트
                 prompt = f'''
-                당신은 영어학원의 엄격한 단어 시험 채점 보조원입니다.
-                학생 답안지 사진을 읽고 교재 정답지와 대조하여 엄격하게 채점하세요.
+                영단어 시험 채점 보조원입니다. 사진의 답안을 읽고 교재 정답지와 대조하여 채점하세요.
                 
                 [교재 정답지]
                 {formatted_answers}
                 
-                [채점 지침]
-                1. 문항 번호와 손글씨 영단어/문장을 정확히 인식하세요.
-                2. 정답지의 철자와 완벽히 일치해야만 정답(true) 처리합니다. 뜻이 같아도 교재 단어가 아니면 오답(false) 처리합니다.
-                3. 대소문자는 구분하지 않습니다.
+                [채점 규칙]
+                1. 정답지와 철자가 완벽히 일치해야만 true.
+                2. 대소문자는 구분하지 않음.
                 
-                [응답 포맷 (JSON 전용)]
+                [JSON 응답 형식]
                 {{
                   "student_name": "학생 이름",
                   "total_questions": 전체문항수,
@@ -69,16 +67,17 @@ if st.button("🚀 채점 시작하기", type="primary"):
                   "details": [
                     {{
                       "number": "1",
-                      "student_answer": "학생 단어",
-                      "correct_answer": "교재 정답",
+                      "student_answer": "학생 답",
+                      "correct_answer": "정답",
                       "is_correct": true
                     }}
                   ]
                 }}
                 '''
                 
+                # 비용 절감 적용: gpt-4o-mini 모델 및 detail: "low" 설정
                 response = client.chat.completions.create(
-                    model="gpt-4o",
+                    model="gpt-4o-mini",
                     messages=[{
                         "role": "user",
                         "content": [
@@ -87,7 +86,7 @@ if st.button("🚀 채점 시작하기", type="primary"):
                                 "type": "image_url",
                                 "image_url": {
                                     "url": f"data:image/jpeg;base64,{base64_image}",
-                                    "detail": "high"
+                                    "detail": "low"
                                 }
                             }
                         ]
