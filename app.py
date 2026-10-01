@@ -12,7 +12,12 @@ st.title("📝 영단어 시험 자동 채점 프로그램")
 st.write("갤럭시 S25로 찍은 답안지 사진과 엑셀 정답지를 업로드하면 교재 단어 기준에 맞춰 채점합니다.")
 
 st.sidebar.header("🔑 설정")
-api_key = st.sidebar.text_input("OpenAI API Key 입력", type="password")
+# 비밀 저장소(Secrets)에서 API 키를 자동으로 가져오고, 없으면 입력창 표시
+if "OPENAI_API_KEY" in st.secrets:
+    api_key = st.secrets["OPENAI_API_KEY"]
+    st.sidebar.success("✅ API 키가 저장되어 있습니다.")
+else:
+    api_key = st.sidebar.text_input("OpenAI API Key 입력", type="password")
 
 st.markdown("### 1단계: 교재 정답지 엑셀 파일 업로드")
 st.info("💡 엑셀 형식: **1열 = 문항 번호**, **2열 = 정답 단어/문장** (첫 번째 시트)")
