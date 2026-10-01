@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 인류 역사상 최고의 채점 프로그램")
+st.title("📝 Grit English 채점 프로그램")
 st.write(
     "Made by 열라 쩌는 Jason쌤"
 )
