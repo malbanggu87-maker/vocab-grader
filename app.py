@@ -6,8 +6,8 @@ import base64
 
 st.set_page_config(page_title="영단어 시험 자동 채점", page_icon="📝", layout="centered")
 
-st.title("📝 Grit English 자동채점 프로그램")
-st.write("시험지 사진과 엑셀 정답지를 업로드하면 교재 단어 기준에 맞춰 채점합니다.")
+st.title("📝 영단어 시험 자동 채점 프로그램")
+st.write("갤럭시 S25로 찍은 답안지 사진과 엑셀 정답지를 업로드하면 교재 단어 기준에 맞춰 채점합니다.")
 
 st.sidebar.header("🔑 설정")
 
@@ -24,7 +24,7 @@ answer_file = st.file_uploader("정답지 엑셀 (.xlsx) 파일 선택", type=["
 
 st.markdown("### 2단계: 학생 답안지 사진 업로드")
 student_photos = st.file_uploader(
-    "답안지 사진 (다중 선택 가능)", 
+    "갤럭시 S25로 촬영한 답안지 사진 (다중 선택 가능)", 
     type=["jpg", "jpeg", "png"], 
     accept_multiple_files=True
 )
@@ -34,7 +34,7 @@ if st.button("🚀 채점 시작하기", type="primary"):
         st.error("API 키, 정답지 엑셀 파일, 학생 사진을 모두 확인해주세요.")
     else:
         try:
-            # 엑셀 데이터 로드 및 간결한 형태로 변환 (토큰 절감)
+            # 엑셀 데이터 로드 및 간결한 형태로 변환
             df_answers = pd.read_excel(answer_file)
             answer_dict = dict(zip(df_answers.iloc[:, 0].astype(str), df_answers.iloc[:, 1].astype(str).str.strip()))
             formatted_answers = json.dumps(answer_dict, ensure_ascii=False)
@@ -48,16 +48,19 @@ if st.button("🚀 채점 시작하기", type="primary"):
                 bytes_data = photo.getvalue()
                 base64_image = base64.b64encode(bytes_data).decode('utf-8')
                 
-                # 토큰 소모를 줄인 경량화 프롬프트
+                # 정밀 채점을 위한 프롬프트
                 prompt = f'''
-                영단어 시험 채점 보조원입니다. 사진의 답안을 읽고 교재 정답지와 대조하여 채점하세요.
+                당신은 꼼꼼한 영단어 시험 채점 보조원입니다. 
+                첨부된 사진의 학생 답안지에서 각 문항의 알파벳 손글씨 철자를 선명하고 주의 깊게 읽은 후, 교재 정답지와 대조하여 채점하세요.
                 
                 [교재 정답지]
                 {formatted_answers}
                 
-                [채점 규칙]
-                1. 정답지와 철자가 완벽히 일치해야만 true.
-                2. 대소문자는 구분하지 않음.
+                [채점 및 인식 규칙]
+                1. 사진 속 손글씨 알파벳 하나하나를 정밀하게 판독하세요.
+                2. 정답지와 철자가 완벽히 일치해야만 is_correct를 true로 설정하세요. (철자가 1글자라도 틀리면 false)
+                3. 대소문자는 구분하지 않습니다.
+                4. 학생 답안이 빈칸이거나 알아볼 수 없으면 student_answer에 "(미응답)"으로 작성하고 false 처리하세요.
                 
                 [JSON 응답 형식]
                 {{
@@ -75,7 +78,7 @@ if st.button("🚀 채점 시작하기", type="primary"):
                 }}
                 '''
                 
-                # 비용 절감 적용: gpt-4o-mini 모델 및 detail: "low" 설정
+                # 정확도 복구: detail: "high" 적용 (손글씨 정밀 판독)
                 response = client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[{
@@ -86,7 +89,7 @@ if st.button("🚀 채점 시작하기", type="primary"):
                                 "type": "image_url",
                                 "image_url": {
                                     "url": f"data:image/jpeg;base64,{base64_image}",
-                                    "detail": "low"
+                                    "detail": "high"
                                 }
                             }
                         ]
