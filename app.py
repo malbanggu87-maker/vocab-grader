@@ -93,10 +93,11 @@ if student_photos:
         for idx, photo in enumerate(student_photos):
             with cols[idx % 3]:
                 img = Image.open(photo)
+                # use_column_width=True -> use_container_width=True 수정 완료
                 st.image(
                     img,
                     caption=f"파일: {photo.name}",
-                    use_column_width=True,
+                    use_container_width=True,
                 )
 
 
@@ -196,7 +197,7 @@ if st.button("🚀 전체 채점 시작하기", type="primary", use_container_wi
                     c_ans = str(detail.get("correct_answer", "")).strip()
 
                     is_correct, reason = evaluate_answer(s_ans, c_ans)
-                    
+
                     student_results_map[detected_name].append({
                         "문항 번호": detail.get("number", ""),
                         "학생 작성 답안 (오답)": s_ans,
@@ -222,13 +223,16 @@ if st.button("🚀 전체 채점 시작하기", type="primary", use_container_wi
                         "문항 번호": r["문항 번호"],
                         "학생 작성 답안 (오답)": r["학생 작성 답안 (오답)"],
                         "교재 정답": r["교재 정답"],
-                        "파일명": r["파일명"]
+                        "파일명": r["파일명"],
                     }
-                    for r in records if not r["정오답"]
+                    for r in records
+                    if not r["정오답"]
                 ]
 
                 st.markdown(f"### 👤 학생: **{s_name}**")
-                st.info(f"점수: **{total_correct} / {total_q_count}점** (틀린 문항: {wrong_count}개)")
+                st.info(
+                    f"점수: **{total_correct} / {total_q_count}점** (틀린 문항: {wrong_count}개)"
+                )
 
                 if wrong_details:
                     df_wrong = pd.DataFrame(wrong_details)
@@ -244,7 +248,9 @@ if st.button("🚀 전체 채점 시작하기", type="primary", use_container_wi
                     )
                 else:
                     st.balloons()
-                    st.success(f"🎉 **{s_name}** 학생은 제출한 모든 문항을 맞혔습니다!")
+                    st.success(
+                        f"🎉 **{s_name}** 학생은 제출한 모든 문항을 맞혔습니다!"
+                    )
 
                 st.markdown("---")
 
