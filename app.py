@@ -12,9 +12,9 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 영단어 및 문장 자동 채점 (스마트폰 원본 사진 모드)")
+st.title("📝 Grit English 채점 프로그램")
 st.write(
-    "파일명 수정 없이 스마트폰으로 촬영한 원본 사진들을 그대로 업로드하면, AI가 시험지를 분석하여 학생별로 자동 채점합니다."
+    "Made by Jason"
 )
 
 st.sidebar.header("🔑 설정")
