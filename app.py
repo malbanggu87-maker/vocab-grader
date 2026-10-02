@@ -28,30 +28,51 @@ else:
 st.markdown("### 1단계: 교재 정답지 엑셀 파일 업로드")
 st.info("💡 엑셀 형식: **1열 = 문항 번호**, **2열 = 정답 단어/문장** (첫 번째 시트)")
 
-# 모바일 브라우저 호환성을 위한 확장자 및 MIME-Type 허용
 answer_file = st.file_uploader(
     "정답지 엑셀 (.xlsx, .xls) 파일 선택",
     type=["xlsx", "xls", "csv"],
-    help="갤럭시 등 모바일 단말기에서는 내장 파일 관리자를 통해 선택해주세요."
+    key="answer_uploader"
 )
 
-st.markdown("### 2단계: 답안지 사진 업로드")
-st.caption(
-    "📌 파일명 규칙 필요 없음: 제출된 시험지 여러 장을 그대로 다중 선택하여 업로드하세요."
-)
-student_photos = st.file_uploader(
-    "답안지 사진 업로드 (다중 선택 가능)",
-    type=["jpg", "jpeg", "png", "heic", "webp"],
-    accept_multiple_files=True,
-)
+st.markdown("### 2단계: 답안지 사진 업로드 / 촬영")
+st.caption("📌 갤러리 선택 또는 카메라 직접 촬영을 이용하세요.")
+
+# 모바일 편의성을 위한 탭 구성 (갤러리 선택 vs 직접 촬영)
+tab1, tab2 = st.tabs(["📁 갤러리에서 선택", "📸 카메라로 바로 촬영"])
+
+student_photos = []
+
+with tab1:
+    uploaded_files = st.file_uploader(
+        "답안지 사진 업로드 (다중 선택 가능)",
+        type=["jpg", "jpeg", "png", "heic", "webp", "bmp"],
+        accept_multiple_files=True,
+        key="photo_uploader"
+    )
+    if uploaded_files:
+        student_photos.extend(uploaded_files)
+
+with tab2:
+    camera_file = st.camera_input("갤럭시 S25 카메라로 답안지 촬영")
+    if camera_file:
+        student_photos.append(camera_file)
 
 
 def compress_and_encode_image(uploaded_file, max_size=1200):
-    """이미지 해상도를 최적화하여 GPT-4o 토큰 비용 절감"""
+    """이미지 해상도를 최적화하여 GPT-4o 토큰 비용 절감 및 대용량 이미지 처리"""
     uploaded_file.seek(0)
     image = Image.open(uploaded_file)
+    
+    # EXIF 회전 정보 보정 (모바일 촬영 사진 눕는 현상 방지)
+    try:
+        from PIL import ImageOps
+        image = ImageOps.exif_transpose(image)
+    except Exception:
+        pass
+
     if image.mode != "RGB":
         image = image.convert("RGB")
+        
     image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=85)
@@ -85,11 +106,7 @@ def evaluate_answer(student_ans: str, correct_ans: str) -> tuple[bool, str]:
 
 
 def generate_diff_html(student_ans: str, correct_ans: str) -> str:
-    """
-    학생 답안과 정답을 글자 단위로 비교하여 HTML 스트링을 생성합니다.
-    - 틀린 철자/잘못 적은 단어: 빨간색 알파벳
-    - 빠뜨리거나 미응답인 부분: 빠진 철자 수만큼 빨간색 물음표(?)
-    """
+    """학생 답안과 정답을 글자 단위로 비교하여 HTML 스트링을 생성"""
     if not student_ans or student_ans in ["미응답", "(미응답)"]:
         missing_length = max(len(correct_ans.strip()), 1)
         return f'{"?" * missing_length}'
@@ -123,14 +140,14 @@ def generate_diff_html(student_ans: str, correct_ans: str) -> str:
 
 
 # ---------------------------------------------------------
-# 업로드된 사진 미리보기 영역 (파일명 규칙 없음)
+# 업로드된 사진 미리보기 영역
 # ---------------------------------------------------------
 if student_photos:
     st.success(
-        f"총 {len(student_photos)}장의 사진이 성공적으로 업로드되었습니다."
+        f"총 {len(student_photos)}장의 사진이 성공적으로 불러와졌습니다."
     )
 
-    with st.expander("🔍 업로드된 원본 사진 목록 및 미리보기"):
+    with st.expander("🔍 불러온 원본 사진 목록 및 미리보기"):
         cols = st.columns(3)
         for idx, photo in enumerate(student_photos):
             with cols[idx % 3]:
@@ -138,7 +155,7 @@ if student_photos:
                 img = Image.open(photo)
                 st.image(
                     img,
-                    caption=f"파일: {photo.name}",
+                    caption=f"파일: {getattr(photo, 'name', f'촬영사진_{idx+1}.jpg')}",
                     use_container_width=True,
                 )
 
@@ -161,7 +178,6 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
             else:
                 df_answers = pd.read_excel(answer_file, header=None, engine="openpyxl").dropna(how="all")
 
-            # 정답 dictionary 생성 (소수점 번호 방지 .replace(r'\.0$', ''))
             q_nums = df_answers.iloc[:, 0].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
             q_ans = df_answers.iloc[:, 1].astype(str).str.strip()
             
@@ -173,8 +189,9 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
             student_results_map = {}
 
             for idx, photo in enumerate(student_photos):
+                photo_name = getattr(photo, 'name', f"촬영사진_{idx+1}.jpg")
                 st.markdown(
-                    f"--- 📄 **[진행 중 ({idx+1}/{len(student_photos)})]** `{photo.name}` 분석 및 학생 식별 중..."
+                    f"--- 📄 **[진행 중 ({idx+1}/{len(student_photos)})]** `{photo_name}` 분석 및 학생 식별 중..."
                 )
 
                 base64_image = compress_and_encode_image(photo, max_size=1200)
@@ -250,11 +267,11 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                         "오답 분석 (대조)": visualized_html,
                         "교재 정답": c_ans,
                         "정오답": is_correct,
-                        "파일명": photo.name,
+                        "파일명": photo_name,
                     })
 
             # ---------------------------------------------------------
-            # 학생별로 데이터 취합 및 최종 리포트/오답노트 출력
+            # 학생별 최종 결과 종합
             # ---------------------------------------------------------
             st.markdown("---")
             st.subheader("📊 학생별 최종 채점 결과 종합")
