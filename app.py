@@ -26,7 +26,7 @@ else:
     api_key = st.sidebar.text_input("OpenAI API Key 입력", type="password")
 
 # ---------------------------------------------------------
-# 1단계: 학생 시험지 사진 업로드
+# 1단계: 학생 시험지 사진 업로드 (다중 선택 가능)
 # ---------------------------------------------------------
 st.markdown("### 1단계: 학생 시험지 사진 업로드")
 st.caption("📌 노트북에 저장된 학생 시험지 사진들을 다중 선택하여 업로드하세요.")
@@ -39,14 +39,15 @@ student_photos = st.file_uploader(
 )
 
 # ---------------------------------------------------------
-# 2단계: 교재 정답지 엑셀 파일 업로드
+# 2단계: 교재 정답지 엑셀/CSV 파일 업로드 (다중 선택 가능)
 # ---------------------------------------------------------
 st.markdown("### 2단계: 교재 정답지 엑셀 파일 업로드")
-st.info("💡 엑셀 형식: **1열 = 문항 번호**, **2열 = 정답 단어/문장** (첫 번째 시트)")
+st.info("💡 엑셀/CSV 형식: **1열 = 문항 번호**, **2열 = 정답 단어/문장** (여러 파일 업로드 시 하나로 자동 통합됩니다)")
 
-answer_file = st.file_uploader(
-    "정답지 엑셀 (.xlsx, .xls, .csv) 파일 선택",
+answer_files = st.file_uploader(
+    "정답지 엑셀/CSV 파일 선택 (다중 선택 가능)",
     type=["xlsx", "xls", "csv"],
+    accept_multiple_files=True,
     key="answer_uploader"
 )
 
@@ -131,10 +132,10 @@ def generate_diff_html(student_ans: str, correct_ans: str) -> str:
 
 
 # ---------------------------------------------------------
-# 업로드된 사진 미리보기 영역
+# 업로드된 사진 및 정답지 파일 상태 요약 표시
 # ---------------------------------------------------------
 if student_photos:
-    st.success(f"총 {len(student_photos)}장의 시험지 사진이 업로드되었습니다.")
+    st.success(f"📸 총 {len(student_photos)}장의 시험지 사진이 업로드되었습니다.")
 
     with st.expander("🔍 업로드한 시험지 원본 사진 미리보기"):
         cols = st.columns(3)
@@ -152,36 +153,47 @@ if student_photos:
                 except Exception as e:
                     st.warning(f"이미지 미리보기 실패 ({photo.name}): {e}")
 
+if answer_files:
+    file_names = ", ".join([f"`{f.name}`" for f in answer_files])
+    st.info(f"📊 총 {len(answer_files)}개의 정답지 파일이 불러와졌습니다: {file_names}")
+
 
 # ---------------------------------------------------------
 # 채점 실행 버튼 영역
 # ---------------------------------------------------------
 st.markdown("---")
-if st.button("🚀 여길 눌러 채점을 조지십시요", type="primary", use_container_width=True):
-    if not api_key or not answer_file or not student_photos:
+if st.button("🚀 채점을 조지십시요", type="primary", use_container_width=True):
+    if not api_key or not answer_files or not student_photos:
         st.error("API 키, 학생 시험지 사진, 교재 정답지 엑셀 파일을 모두 업로드해 주세요.")
     else:
         try:
-            # 엑셀/CSV 정답지 로드
-            answer_bytes = answer_file.getvalue()
-            file_name = answer_file.name.lower()
-            
-            if file_name.endswith(".csv"):
-                df_answers = pd.read_csv(io.BytesIO(answer_bytes), header=None).dropna(how="all")
-            else:
-                df_answers = pd.read_excel(io.BytesIO(answer_bytes), header=None, engine="openpyxl").dropna(how="all")
+            # ---------------------------------------------------------
+            # 여러 정답지 엑셀/CSV 파일 읽어서 하나로 병합
+            # ---------------------------------------------------------
+            combined_answer_dict = {}
 
-            q_nums = df_answers.iloc[:, 0].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-            q_ans = df_answers.iloc[:, 1].astype(str).str.strip()
-            
-            answer_dict = dict(zip(q_nums, q_ans))
-            formatted_answers = json.dumps(answer_dict, ensure_ascii=False)
+            for ans_file in answer_files:
+                answer_bytes = ans_file.getvalue()
+                f_name = ans_file.name.lower()
+
+                if f_name.endswith(".csv"):
+                    df_sub = pd.read_csv(io.BytesIO(answer_bytes), header=None).dropna(how="all")
+                else:
+                    df_sub = pd.read_excel(io.BytesIO(answer_bytes), header=None, engine="openpyxl").dropna(how="all")
+
+                q_nums = df_sub.iloc[:, 0].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+                q_ans = df_sub.iloc[:, 1].astype(str).str.strip()
+
+                sub_dict = dict(zip(q_nums, q_ans))
+                combined_answer_dict.update(sub_dict)  # 동일한 문항 번호가 있을 경우 뒤 파일 내용으로 덮어씀/추가
+
+            formatted_answers = json.dumps(combined_answer_dict, ensure_ascii=False)
 
             client = OpenAI(api_key=api_key)
 
             st.markdown("### 📊 파일별 채점 결과")
 
-            # 업로드된 각 사진 파일별로 채점 수행
+            # 업로드된 각 사진 파일별로 순회하며 채점 수행
             for idx, photo in enumerate(student_photos):
                 st.markdown(
                     f"#### 📄 [{idx+1}/{len(student_photos)}] 파일명: `{photo.name}` 채점 진행 중..."
