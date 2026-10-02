@@ -1,5 +1,4 @@
 import base64
-import difflib
 import io
 import json
 import re
@@ -28,14 +27,10 @@ else:
 
 def extract_key_number(filename: str) -> str:
     """파일명에서 끝쪽 숫자 2자리를 추출 (숫자 1자리만 있는 경우 01 형태로 정규화)"""
-    # 파일 확장자 제거
     name_without_ext = re.sub(r"\.[^.]+$", "", filename)
-    # 파일명 안에서 모든 숫자 뭉치 찾기
     numbers = re.findall(r"\d+", name_without_ext)
     if numbers:
-        # 가장 마지막에 등장하는 숫자 사용
         last_num = numbers[-1]
-        # 2자리 포맷으로 맞춤 (예: "1" -> "01", "01" -> "01")
         return last_num.zfill(2)[-2:]
     return ""
 
@@ -110,40 +105,6 @@ def evaluate_answer(student_ans: str, correct_ans: str) -> tuple[bool, str]:
         return True, "정답"
     else:
         return False, "철자 불일치"
-
-
-def generate_diff_html(student_ans: str, correct_ans: str) -> str:
-    """학생 답안과 정답을 글자 단위로 비교하여 HTML 스트링 생성"""
-    if not student_ans or student_ans in ["미응답", "(미응답)"]:
-        missing_length = max(len(correct_ans.strip()), 1)
-        return f'{"?" * missing_length}'
-
-    diff = list(difflib.ndiff(correct_ans, student_ans))
-    html_result = ""
-    i = 0
-
-    while i < len(diff):
-        code, val = diff[i][0], diff[i][2]
-
-        if code == " ":
-            html_result += val
-            i += 1
-        elif code == "-":
-            missing_count = 0
-            while i < len(diff) and diff[i][0] == "-":
-                missing_count += 1
-                i += 1
-            html_result += f'{"?" * missing_count}'
-        elif code == "+":
-            wrong_chars = ""
-            while i < len(diff) and diff[i][0] == "+":
-                wrong_chars += diff[i][2]
-                i += 1
-            html_result += f'{wrong_chars}'
-        else:
-            i += 1
-
-    return html_result
 
 
 def load_answer_dict_from_file(ans_file) -> dict:
@@ -304,23 +265,22 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
 
                 records = []
                 for detail in details:
-                    s_ans = str(detail.get("student_answer", "")).strip()
+                    raw_s_ans = str(detail.get("student_answer", "")).strip()
                     c_ans = str(detail.get("correct_answer", "")).strip()
 
-                    is_correct, reason = evaluate_answer(s_ans, c_ans)
+                    is_correct, reason = evaluate_answer(raw_s_ans, c_ans)
 
-                    visualized_html = (
-                        generate_diff_html(s_ans, c_ans)
-                        if not is_correct
-                        else s_ans
-                    )
+                    # 미응답 또는 "(미응답)"으로 인식된 경우 공란("")으로 처리
+                    if not raw_s_ans or raw_s_ans in ["미응답", "(미응답)"]:
+                        display_s_ans = ""
+                    else:
+                        display_s_ans = raw_s_ans
 
                     records.append({
                         "문항 번호": str(detail.get("number", "")).replace(
                             ".0", ""
                         ),
-                        "학생 작성 답안": s_ans,
-                        "오답 분석 (대조)": visualized_html,
+                        "학생 작성 답안": display_s_ans,
                         "교재 정답": c_ans,
                         "정오답": is_correct,
                     })
@@ -333,9 +293,8 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                 wrong_details = [
                     {
                         "문항 번호": r["문항 번호"],
-                        "오답 분석 (대조)": r["오답 분석 (대조)"],
+                        "학생 작성 답안": r["학생 작성 답안"],
                         "교재 정답": r["교재 정답"],
-                        "원본 학생 답안": r["학생 작성 답안"],
                     }
                     for r in records
                     if not r["정오답"]
@@ -348,27 +307,16 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                 if wrong_details:
                     df_wrong = pd.DataFrame(wrong_details)
 
-                    # 화면 표시용
-                    df_display = df_wrong[
-                        ["문항 번호", "오답 분석 (대조)", "교재 정답"]
-                    ]
-                    st.write(
-                        df_display.to_html(escape=False, index=False),
-                        unsafe_allow_html=True,
+                    # 화면 출력 (학생 작성 답안 그대로 표시, 미응답은 빈칸)
+                    st.dataframe(
+                        df_wrong,
+                        use_container_width=True,
+                        hide_index=True,
                     )
                     st.write("")
 
-                    # CSV 다운로드용
-                    clean_wrong_details = [
-                        {
-                            "문항 번호": w["문항 번호"],
-                            "학생 작성 답안": w["원본 학생 답안"],
-                            "교재 정답": w["교재 정답"],
-                        }
-                        for w in wrong_details
-                    ]
-                    df_csv = pd.DataFrame(clean_wrong_details)
-                    csv_data = df_csv.to_csv(index=False).encode("utf-8-sig")
+                    # CSV 다운로드 파일 생성
+                    csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
 
                     safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
                     st.download_button(
