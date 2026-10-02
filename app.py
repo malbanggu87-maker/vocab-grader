@@ -25,30 +25,45 @@ if "OPENAI_API_KEY" in st.secrets:
 else:
     api_key = st.sidebar.text_input("OpenAI API Key 입력", type="password")
 
+
+def extract_key_number(filename: str) -> str:
+    """파일명에서 끝쪽 숫자 2자리를 추출 (숫자 1자리만 있는 경우 01 형태로 정규화)"""
+    # 파일 확장자 제거
+    name_without_ext = re.sub(r"\.[^.]+$", "", filename)
+    # 파일명 안에서 모든 숫자 뭉치 찾기
+    numbers = re.findall(r"\d+", name_without_ext)
+    if numbers:
+        # 가장 마지막에 등장하는 숫자 사용
+        last_num = numbers[-1]
+        # 2자리 포맷으로 맞춤 (예: "1" -> "01", "01" -> "01")
+        return last_num.zfill(2)[-2:]
+    return ""
+
+
 # ---------------------------------------------------------
 # 1단계: 학생 시험지 사진 업로드 (다중 선택 가능)
 # ---------------------------------------------------------
 st.markdown("### 1단계: 학생 시험지 사진 업로드")
-st.caption("📌 노트북에 저장된 학생 시험지 사진들을 다중 선택하여 업로드하세요.")
+st.caption("📌 파일명 끝 2자리 숫자(예: `시험지_01.jpg`)와 정답지 숫자가 매칭됩니다.")
 
 student_photos = st.file_uploader(
     "학생 시험지 사진 업로드 (다중 선택 가능)",
     type=["jpg", "jpeg", "png", "webp"],
     accept_multiple_files=True,
-    key="photo_uploader"
+    key="photo_uploader",
 )
 
 # ---------------------------------------------------------
 # 2단계: 교재 정답지 엑셀/CSV 파일 업로드 (다중 선택 가능)
 # ---------------------------------------------------------
 st.markdown("### 2단계: 교재 정답지 엑셀 파일 업로드")
-st.info("💡 엑셀/CSV 형식: **1열 = 문항 번호**, **2열 = 정답 단어/문장** (여러 파일 업로드 시 하나로 자동 통합됩니다)")
+st.info("💡 파일명 끝 2자리 숫자(예: `정답지_01.xlsx`)가 시험지와 일치하는 정답지를 자동으로 찾아 채점합니다.")
 
 answer_files = st.file_uploader(
     "정답지 엑셀/CSV 파일 선택 (다중 선택 가능)",
     type=["xlsx", "xls", "csv"],
     accept_multiple_files=True,
-    key="answer_uploader"
+    key="answer_uploader",
 )
 
 
@@ -56,7 +71,7 @@ def compress_and_encode_image(uploaded_file, max_size=1200):
     """이미지 해상도 최적화, EXIF 회전 보정 및 RGB 변환"""
     file_bytes = uploaded_file.getvalue()
     image = Image.open(io.BytesIO(file_bytes))
-    
+
     try:
         image = ImageOps.exif_transpose(image)
     except Exception:
@@ -64,7 +79,7 @@ def compress_and_encode_image(uploaded_file, max_size=1200):
 
     if image.mode != "RGB":
         image = image.convert("RGB")
-        
+
     image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=85)
@@ -110,18 +125,18 @@ def generate_diff_html(student_ans: str, correct_ans: str) -> str:
     while i < len(diff):
         code, val = diff[i][0], diff[i][2]
 
-        if code == ' ':
+        if code == " ":
             html_result += val
             i += 1
-        elif code == '-':
+        elif code == "-":
             missing_count = 0
-            while i < len(diff) and diff[i][0] == '-':
+            while i < len(diff) and diff[i][0] == "-":
                 missing_count += 1
                 i += 1
             html_result += f'{"?" * missing_count}'
-        elif code == '+':
+        elif code == "+":
             wrong_chars = ""
-            while i < len(diff) and diff[i][0] == '+':
+            while i < len(diff) and diff[i][0] == "+":
                 wrong_chars += diff[i][2]
                 i += 1
             html_result += f'{wrong_chars}'
@@ -131,15 +146,43 @@ def generate_diff_html(student_ans: str, correct_ans: str) -> str:
     return html_result
 
 
+def load_answer_dict_from_file(ans_file) -> dict:
+    """단일 정답지 파일(엑셀/CSV)에서 정답 데이터 딕셔너리 추출"""
+    answer_bytes = ans_file.getvalue()
+    f_name = ans_file.name.lower()
+
+    if f_name.endswith(".csv"):
+        df_sub = pd.read_csv(io.BytesIO(answer_bytes), header=None).dropna(
+            how="all"
+        )
+    else:
+        df_sub = pd.read_excel(
+            io.BytesIO(answer_bytes), header=None, engine="openpyxl"
+        ).dropna(how="all")
+
+    q_nums = (
+        df_sub.iloc[:, 0]
+        .astype(str)
+        .str.replace(r"\.0$", "", regex=True)
+        .str.strip()
+    )
+    q_ans = df_sub.iloc[:, 1].astype(str).str.strip()
+
+    return dict(zip(q_nums, q_ans))
+
+
 # ---------------------------------------------------------
-# 업로드된 사진 및 정답지 파일 상태 요약 표시
+# 업로드된 사진 및 정답지 파일 상태 요약 및 매칭 확인
 # ---------------------------------------------------------
 if student_photos:
-    st.success(f"📸 총 {len(student_photos)}장의 시험지 사진이 업로드되었습니다.")
+    st.success(
+        f"📸 총 {len(student_photos)}장의 시험지 사진이 업로드되었습니다."
+    )
 
     with st.expander("🔍 업로드한 시험지 원본 사진 미리보기"):
         cols = st.columns(3)
         for idx, photo in enumerate(student_photos):
+            p_key = extract_key_number(photo.name)
             with cols[idx % 3]:
                 try:
                     photo_bytes = photo.getvalue()
@@ -147,15 +190,24 @@ if student_photos:
                     img = ImageOps.exif_transpose(img)
                     st.image(
                         img,
-                        caption=f"파일명: {photo.name}",
+                        caption=f"파일명: {photo.name} (식별번호: {p_key if p_key else '없음'})",
                         use_container_width=True,
                     )
                 except Exception as e:
                     st.warning(f"이미지 미리보기 실패 ({photo.name}): {e}")
 
+# 정답지 파일 딕셔너리 맵 생성 (식별 번호 -> 정답지 파일)
+answer_file_map = {}
 if answer_files:
+    for ans_f in answer_files:
+        a_key = extract_key_number(ans_f.name)
+        if a_key:
+            answer_file_map[a_key] = ans_f
+
     file_names = ", ".join([f"`{f.name}`" for f in answer_files])
-    st.info(f"📊 총 {len(answer_files)}개의 정답지 파일이 불러와졌습니다: {file_names}")
+    st.info(
+        f"📊 총 {len(answer_files)}개의 정답지 파일이 불러와졌습니다: {file_names}"
+    )
 
 
 # ---------------------------------------------------------
@@ -164,39 +216,40 @@ if answer_files:
 st.markdown("---")
 if st.button("🚀 채점을 조지십시요", type="primary", use_container_width=True):
     if not api_key or not answer_files or not student_photos:
-        st.error("API 키, 학생 시험지 사진, 교재 정답지 엑셀 파일을 모두 업로드해 주세요.")
+        st.error(
+            "API 키, 학생 시험지 사진, 교재 정답지 엑셀 파일을 모두 업로드해 주세요."
+        )
     else:
         try:
-            # ---------------------------------------------------------
-            # 여러 정답지 엑셀/CSV 파일 읽어서 하나로 병합
-            # ---------------------------------------------------------
-            combined_answer_dict = {}
-
-            for ans_file in answer_files:
-                answer_bytes = ans_file.getvalue()
-                f_name = ans_file.name.lower()
-
-                if f_name.endswith(".csv"):
-                    df_sub = pd.read_csv(io.BytesIO(answer_bytes), header=None).dropna(how="all")
-                else:
-                    df_sub = pd.read_excel(io.BytesIO(answer_bytes), header=None, engine="openpyxl").dropna(how="all")
-
-                q_nums = df_sub.iloc[:, 0].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-                q_ans = df_sub.iloc[:, 1].astype(str).str.strip()
-
-                sub_dict = dict(zip(q_nums, q_ans))
-                combined_answer_dict.update(sub_dict)  # 동일한 문항 번호가 있을 경우 뒤 파일 내용으로 덮어씀/추가
-
-            formatted_answers = json.dumps(combined_answer_dict, ensure_ascii=False)
-
             client = OpenAI(api_key=api_key)
-
             st.markdown("### 📊 파일별 채점 결과")
 
-            # 업로드된 각 사진 파일별로 순회하며 채점 수행
+            # 업로드된 각 사진 파일별로 순회하며 매칭되는 정답지를 찾아 채점
             for idx, photo in enumerate(student_photos):
+                photo_key = extract_key_number(photo.name)
+
                 st.markdown(
-                    f"#### 📄 [{idx+1}/{len(student_photos)}] 파일명: `{photo.name}` 채점 진행 중..."
+                    f"#### 📄 [{idx+1}/{len(student_photos)}] 파일명: `{photo.name}` (식별번호: `{photo_key}`)"
+                )
+
+                # 파일명 번호에 맞는 정답지 파일 찾기
+                matched_answer_file = answer_file_map.get(photo_key)
+
+                if not matched_answer_file:
+                    st.error(
+                        f"❌ `{photo.name}`에 맞는 정답지(끝 2자리 `{photo_key}`)를 찾을 수 없습니다. 건너뜁니다."
+                    )
+                    st.markdown("---")
+                    continue
+
+                st.caption(
+                    f"🔗 매칭된 정답지: `{matched_answer_file.name}`"
+                )
+
+                # 매칭된 정답지 파일 데이터 읽기
+                answer_dict = load_answer_dict_from_file(matched_answer_file)
+                formatted_answers = json.dumps(
+                    answer_dict, ensure_ascii=False
                 )
 
                 base64_image = compress_and_encode_image(photo, max_size=1200)
@@ -263,7 +316,9 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                     )
 
                     records.append({
-                        "문항 번호": str(detail.get("number", "")).replace(".0", ""),
+                        "문항 번호": str(detail.get("number", "")).replace(
+                            ".0", ""
+                        ),
                         "학생 작성 답안": s_ans,
                         "오답 분석 (대조)": visualized_html,
                         "교재 정답": c_ans,
@@ -286,16 +341,20 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                     if not r["정오답"]
                 ]
 
-                st.info(f"결과: **{total_correct} / {total_q_count}점** (틀린 문항: {wrong_count}개)")
+                st.info(
+                    f"결과: **{total_correct} / {total_q_count}점** (틀린 문항: {wrong_count}개)"
+                )
 
                 if wrong_details:
                     df_wrong = pd.DataFrame(wrong_details)
-                    
+
                     # 화면 표시용
-                    df_display = df_wrong[["문항 번호", "오답 분석 (대조)", "교재 정답"]]
+                    df_display = df_wrong[
+                        ["문항 번호", "오답 분석 (대조)", "교재 정답"]
+                    ]
                     st.write(
                         df_display.to_html(escape=False, index=False),
-                        unsafe_allow_html=True
+                        unsafe_allow_html=True,
                     )
                     st.write("")
 
