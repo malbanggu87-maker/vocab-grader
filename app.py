@@ -27,7 +27,13 @@ else:
 
 st.markdown("### 1단계: 교재 정답지 엑셀 파일 업로드")
 st.info("💡 엑셀 형식: **1열 = 문항 번호**, **2열 = 정답 단어/문장** (첫 번째 시트)")
-answer_file = st.file_uploader("정답지 엑셀 (.xlsx) 파일 선택", type=["xlsx"])
+
+# 모바일 브라우저 호환성을 위한 확장자 및 MIME-Type 허용
+answer_file = st.file_uploader(
+    "정답지 엑셀 (.xlsx, .xls) 파일 선택",
+    type=["xlsx", "xls", "csv"],
+    help="갤럭시 등 모바일 단말기에서는 내장 파일 관리자를 통해 선택해주세요."
+)
 
 st.markdown("### 2단계: 답안지 사진 업로드")
 st.caption(
@@ -35,13 +41,14 @@ st.caption(
 )
 student_photos = st.file_uploader(
     "답안지 사진 업로드 (다중 선택 가능)",
-    type=["jpg", "jpeg", "png"],
+    type=["jpg", "jpeg", "png", "heic", "webp"],
     accept_multiple_files=True,
 )
 
 
 def compress_and_encode_image(uploaded_file, max_size=1200):
     """이미지 해상도를 최적화하여 GPT-4o 토큰 비용 절감"""
+    uploaded_file.seek(0)
     image = Image.open(uploaded_file)
     if image.mode != "RGB":
         image = image.convert("RGB")
@@ -55,7 +62,7 @@ def normalize_text(text: str, remove_punctuation: bool = True) -> str:
     """텍스트 정규화 (대소문자, 공백, 문장부호)"""
     if not text:
         return ""
-    text = unicodedata.normalize("NFC", text)
+    text = unicodedata.normalize("NFC", str(text))
     text = text.lower()
     if remove_punctuation:
         text = re.sub(r"[^\w\s]", "", text)
@@ -84,7 +91,6 @@ def generate_diff_html(student_ans: str, correct_ans: str) -> str:
     - 빠뜨리거나 미응답인 부분: 빠진 철자 수만큼 빨간색 물음표(?)
     """
     if not student_ans or student_ans in ["미응답", "(미응답)"]:
-        # 아예 안 썼을 경우 정답 길이나 1개 이상의 빨간색 물음표 표시
         missing_length = max(len(correct_ans.strip()), 1)
         return f'{"?" * missing_length}'
 
@@ -96,18 +102,15 @@ def generate_diff_html(student_ans: str, correct_ans: str) -> str:
         code, val = diff[i][0], diff[i][2]
 
         if code == ' ':
-            # 정답과 학생 답안이 일치하는 글자
             html_result += val
             i += 1
         elif code == '-':
-            # 정답에만 있고 학생 답안에 없음 -> 누락된 글자 수만큼 빨간색 물음표(?)
             missing_count = 0
             while i < len(diff) and diff[i][0] == '-':
                 missing_count += 1
                 i += 1
             html_result += f'{"?" * missing_count}'
         elif code == '+':
-            # 학생이 오타를 내거나 잘못 적은 글자 -> 빨간색 강조
             wrong_chars = ""
             while i < len(diff) and diff[i][0] == '+':
                 wrong_chars += diff[i][2]
@@ -131,6 +134,7 @@ if student_photos:
         cols = st.columns(3)
         for idx, photo in enumerate(student_photos):
             with cols[idx % 3]:
+                photo.seek(0)
                 img = Image.open(photo)
                 st.image(
                     img,
@@ -150,16 +154,18 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
         )
     else:
         try:
-            # 엑셀 데이터 로드
-            df_answers = pd.read_excel(answer_file, header=None).dropna(
-                how="all"
-            )
-            answer_dict = dict(
-                zip(
-                    df_answers.iloc[:, 0].astype(str).str.strip(),
-                    df_answers.iloc[:, 1].astype(str).str.strip(),
-                )
-            )
+            # 엑셀/CSV 데이터 안전 로드
+            answer_file.seek(0)
+            if answer_file.name.endswith(".csv"):
+                df_answers = pd.read_csv(answer_file, header=None).dropna(how="all")
+            else:
+                df_answers = pd.read_excel(answer_file, header=None, engine="openpyxl").dropna(how="all")
+
+            # 정답 dictionary 생성 (소수점 번호 방지 .replace(r'\.0$', ''))
+            q_nums = df_answers.iloc[:, 0].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+            q_ans = df_answers.iloc[:, 1].astype(str).str.strip()
+            
+            answer_dict = dict(zip(q_nums, q_ans))
             formatted_answers = json.dumps(answer_dict, ensure_ascii=False)
 
             client = OpenAI(api_key=api_key)
@@ -232,7 +238,6 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
 
                     is_correct, reason = evaluate_answer(s_ans, c_ans)
 
-                    # 오답인 경우 시각화 HTML 생성
                     visualized_html = (
                         generate_diff_html(s_ans, c_ans)
                         if not is_correct
@@ -240,7 +245,7 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                     )
 
                     student_results_map[detected_name].append({
-                        "문항 번호": detail.get("number", ""),
+                        "문항 번호": str(detail.get("number", "")).replace(".0", ""),
                         "학생 작성 답안": s_ans,
                         "오답 분석 (대조)": visualized_html,
                         "교재 정답": c_ans,
@@ -259,7 +264,6 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                 total_correct = sum(1 for r in records if r["정오답"])
                 wrong_count = total_q_count - total_correct
 
-                # 오답만 필터링
                 wrong_details = [
                     {
                         "문항 번호": r["문항 번호"],
@@ -280,15 +284,13 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                 if wrong_details:
                     df_wrong = pd.DataFrame(wrong_details)
                     
-                    # Streamlit 화면 출력 시 HTML 색상이 정상적으로 적용되도록 to_html(unsafe_allow_html=True) 사용
                     df_display = df_wrong[["문항 번호", "오답 분석 (대조)", "교재 정답", "파일명"]]
                     st.write(
                         df_display.to_html(escape=False, index=False),
                         unsafe_allow_html=True
                     )
-                    st.write("")  # 여백 추가
+                    st.write("")
 
-                    # CSV 다운로드용 데이터 (HTML 태그 제거 버전)
                     clean_wrong_details = []
                     for w in wrong_details:
                         clean_wrong_details.append({
