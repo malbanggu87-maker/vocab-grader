@@ -25,23 +25,29 @@ if "OPENAI_API_KEY" in st.secrets:
 else:
     api_key = st.sidebar.text_input("OpenAI API Key 입력", type="password")
 
-st.markdown("### 1단계: 교재 정답지 엑셀 파일 업로드")
+# ---------------------------------------------------------
+# 1단계: 학생 시험지 사진 업로드
+# ---------------------------------------------------------
+st.markdown("### 1단계: 학생 시험지 사진 업로드")
+st.caption("📌 노트북에 저장된 학생 시험지 사진들을 다중 선택하여 업로드하세요.")
+
+student_photos = st.file_uploader(
+    "학생 시험지 사진 업로드 (다중 선택 가능)",
+    type=["jpg", "jpeg", "png", "webp"],
+    accept_multiple_files=True,
+    key="photo_uploader"
+)
+
+# ---------------------------------------------------------
+# 2단계: 교재 정답지 엑셀 파일 업로드
+# ---------------------------------------------------------
+st.markdown("### 2단계: 교재 정답지 엑셀 파일 업로드")
 st.info("💡 엑셀 형식: **1열 = 문항 번호**, **2열 = 정답 단어/문장** (첫 번째 시트)")
 
 answer_file = st.file_uploader(
     "정답지 엑셀 (.xlsx, .xls, .csv) 파일 선택",
     type=["xlsx", "xls", "csv"],
     key="answer_uploader"
-)
-
-st.markdown("### 2단계: 답안지 사진 업로드")
-st.caption("📌 노트북에 저장된 답안지 사진들을 다중 선택하여 업로드하세요.")
-
-student_photos = st.file_uploader(
-    "답안지 사진 업로드 (다중 선택 가능)",
-    type=["jpg", "jpeg", "png", "webp"],
-    accept_multiple_files=True,
-    key="photo_uploader"
 )
 
 
@@ -128,9 +134,9 @@ def generate_diff_html(student_ans: str, correct_ans: str) -> str:
 # 업로드된 사진 미리보기 영역
 # ---------------------------------------------------------
 if student_photos:
-    st.success(f"총 {len(student_photos)}장의 사진이 업로드되었습니다.")
+    st.success(f"총 {len(student_photos)}장의 시험지 사진이 업로드되었습니다.")
 
-    with st.expander("🔍 업로드한 답안지 원본 사진 미리보기"):
+    with st.expander("🔍 업로드한 시험지 원본 사진 미리보기"):
         cols = st.columns(3)
         for idx, photo in enumerate(student_photos):
             with cols[idx % 3]:
@@ -151,9 +157,9 @@ if student_photos:
 # 채점 실행 버튼 영역
 # ---------------------------------------------------------
 st.markdown("---")
-if st.button("🚀 채점을 조지십시요", type="primary", use_container_width=True):
+if st.button("🚀 여길 눌러 채점을 조지십시요", type="primary", use_container_width=True):
     if not api_key or not answer_file or not student_photos:
-        st.error("API 키, 정답지 엑셀 파일, 학생 답안지 사진을 모두 업로드해 주세요.")
+        st.error("API 키, 학생 시험지 사진, 교재 정답지 엑셀 파일을 모두 업로드해 주세요.")
     else:
         try:
             # 엑셀/CSV 정답지 로드
