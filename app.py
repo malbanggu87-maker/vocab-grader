@@ -16,6 +16,10 @@ st.set_page_config(
 st.title("📝 제이슨의 구원방주")
 st.write("Made by Jason")
 
+# 세션 상태 초기화 (재실행 시 파일 상태 및 uploader_key 관리)
+if "uploader_key" not in st.session_state:
+    st.session_state["uploader_key"] = 0
+
 st.sidebar.header("🔑 설정")
 
 # Secrets에 저장된 API 키 확인
@@ -25,45 +29,51 @@ if "OPENAI_API_KEY" in st.secrets:
 else:
     api_key = st.sidebar.text_input("OpenAI API Key 입력", type="password")
 
+# 초기화 버튼 추가 (두 번째 시도 시 상태 리셋)
+if st.sidebar.button("🔄 파일 및 화면 초기화", use_container_width=True):
+    st.session_state["uploader_key"] += 1
+    st.rerun()
+
 st.markdown("### 1단계: 교재 정답지 엑셀 파일 업로드")
 st.info("💡 엑셀 형식: **1열 = 문항 번호**, **2열 = 정답 단어/문장** (첫 번째 시트)")
 
 answer_file = st.file_uploader(
-    "정답지 엑셀 (.xlsx, .xls) 파일 선택",
-    type=None,  # 모바일 호환성을 위해 타입 제한 해제
-    key="answer_uploader"
+    "정답지 엑셀 (.xlsx, .xls, .csv) 파일 선택",
+    type=None,
+    key=f"answer_uploader_{st.session_state['uploader_key']}"
 )
 
 st.markdown("### 2단계: 답안지 사진 업로드 / 촬영")
 st.caption("📌 갤러리 선택 또는 카메라 직접 촬영을 이용하세요.")
 
-# 모바일 편의성을 위한 탭 구성 (갤러리 선택 vs 직접 촬영)
 tab1, tab2 = st.tabs(["📁 갤러리에서 선택", "📸 카메라로 바로 촬영"])
 
 student_photos = []
 
 with tab1:
-    # type=None으로 설정하여 갤럭시 갤러리의 모든 이미지 파일 및 모션포토 허용
     uploaded_files = st.file_uploader(
         "답안지 사진 업로드 (갤러리에서 다중 선택 가능)",
         type=None,
         accept_multiple_files=True,
-        key="photo_uploader",
+        key=f"photo_uploader_{st.session_state['uploader_key']}",
         help="갤럭시 갤러리/내 파일에서 자유롭게 사진을 선택하세요."
     )
     if uploaded_files:
         student_photos.extend(uploaded_files)
 
 with tab2:
-    camera_file = st.camera_input("갤럭시 S25 카메라로 답안지 촬영")
+    camera_file = st.camera_input(
+        "갤럭시 S25 카메라로 답안지 촬영",
+        key=f"camera_{st.session_state['uploader_key']}"
+    )
     if camera_file:
         student_photos.append(camera_file)
 
 
 def compress_and_encode_image(uploaded_file, max_size=1200):
-    """이미지 해상도 최적화 및 EXIF 자동 회전, RGB 변환"""
-    uploaded_file.seek(0)
-    image = Image.open(uploaded_file)
+    """이미지 해상도 최적화 및 EXIF 자동 회전, RGB 변환 (안전한 버퍼 처리)"""
+    file_bytes = uploaded_file.getvalue()
+    image = Image.open(io.BytesIO(file_bytes))
     
     # EXIF 회전 정보 보정 (갤럭시 모바일 촬영 사진 눕는 현상 방지)
     try:
@@ -152,9 +162,9 @@ if student_photos:
         cols = st.columns(3)
         for idx, photo in enumerate(student_photos):
             with cols[idx % 3]:
-                photo.seek(0)
                 try:
-                    img = Image.open(photo)
+                    photo_bytes = photo.getvalue()
+                    img = Image.open(io.BytesIO(photo_bytes))
                     img = ImageOps.exif_transpose(img)
                     st.image(
                         img,
@@ -162,7 +172,7 @@ if student_photos:
                         use_container_width=True,
                     )
                 except Exception as e:
-                    st.warning(f"이미지 미리보기 실패 ({photo.name}): {e}")
+                    st.warning(f"이미지 미리보기 실패: {e}")
 
 
 # ---------------------------------------------------------
@@ -177,12 +187,13 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
     else:
         try:
             # 엑셀/CSV 데이터 안전 로드
-            answer_file.seek(0)
+            answer_bytes = answer_file.getvalue()
             file_name = getattr(answer_file, "name", "").lower()
+            
             if file_name.endswith(".csv"):
-                df_answers = pd.read_csv(answer_file, header=None).dropna(how="all")
+                df_answers = pd.read_csv(io.BytesIO(answer_bytes), header=None).dropna(how="all")
             else:
-                df_answers = pd.read_excel(answer_file, header=None, engine="openpyxl").dropna(how="all")
+                df_answers = pd.read_excel(io.BytesIO(answer_bytes), header=None, engine="openpyxl").dropna(how="all")
 
             q_nums = df_answers.iloc[:, 0].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
             q_ans = df_answers.iloc[:, 1].astype(str).str.strip()
@@ -330,7 +341,7 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                         data=csv_data,
                         file_name=f"오답노트_{s_name}.csv",
                         mime="text/csv",
-                        key=f"dl_{s_name}",
+                        key=f"dl_{s_name}_{st.session_state['uploader_key']}",
                     )
                 else:
                     st.balloons()
