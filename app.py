@@ -4,7 +4,7 @@ import io
 import json
 import re
 import unicodedata
-from PIL import Image
+from PIL import Image, ImageOps
 from openai import OpenAI
 import pandas as pd
 import streamlit as st
@@ -30,7 +30,7 @@ st.info("💡 엑셀 형식: **1열 = 문항 번호**, **2열 = 정답 단어/�
 
 answer_file = st.file_uploader(
     "정답지 엑셀 (.xlsx, .xls) 파일 선택",
-    type=["xlsx", "xls", "csv"],
+    type=None,  # 모바일 호환성을 위해 타입 제한 해제
     key="answer_uploader"
 )
 
@@ -43,11 +43,13 @@ tab1, tab2 = st.tabs(["📁 갤러리에서 선택", "📸 카메라로 바로 �
 student_photos = []
 
 with tab1:
+    # type=None으로 설정하여 갤럭시 갤러리의 모든 이미지 파일 및 모션포토 허용
     uploaded_files = st.file_uploader(
-        "답안지 사진 업로드 (다중 선택 가능)",
-        type=["jpg", "jpeg", "png", "heic", "webp", "bmp"],
+        "답안지 사진 업로드 (갤러리에서 다중 선택 가능)",
+        type=None,
         accept_multiple_files=True,
-        key="photo_uploader"
+        key="photo_uploader",
+        help="갤럭시 갤러리/내 파일에서 자유롭게 사진을 선택하세요."
     )
     if uploaded_files:
         student_photos.extend(uploaded_files)
@@ -59,13 +61,12 @@ with tab2:
 
 
 def compress_and_encode_image(uploaded_file, max_size=1200):
-    """이미지 해상도를 최적화하여 GPT-4o 토큰 비용 절감 및 대용량 이미지 처리"""
+    """이미지 해상도 최적화 및 EXIF 자동 회전, RGB 변환"""
     uploaded_file.seek(0)
     image = Image.open(uploaded_file)
     
-    # EXIF 회전 정보 보정 (모바일 촬영 사진 눕는 현상 방지)
+    # EXIF 회전 정보 보정 (갤럭시 모바일 촬영 사진 눕는 현상 방지)
     try:
-        from PIL import ImageOps
         image = ImageOps.exif_transpose(image)
     except Exception:
         pass
@@ -152,12 +153,16 @@ if student_photos:
         for idx, photo in enumerate(student_photos):
             with cols[idx % 3]:
                 photo.seek(0)
-                img = Image.open(photo)
-                st.image(
-                    img,
-                    caption=f"파일: {getattr(photo, 'name', f'촬영사진_{idx+1}.jpg')}",
-                    use_container_width=True,
-                )
+                try:
+                    img = Image.open(photo)
+                    img = ImageOps.exif_transpose(img)
+                    st.image(
+                        img,
+                        caption=f"파일: {getattr(photo, 'name', f'촬영사진_{idx+1}.jpg')}",
+                        use_container_width=True,
+                    )
+                except Exception as e:
+                    st.warning(f"이미지 미리보기 실패 ({photo.name}): {e}")
 
 
 # ---------------------------------------------------------
@@ -173,7 +178,8 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
         try:
             # 엑셀/CSV 데이터 안전 로드
             answer_file.seek(0)
-            if answer_file.name.endswith(".csv"):
+            file_name = getattr(answer_file, "name", "").lower()
+            if file_name.endswith(".csv"):
                 df_answers = pd.read_csv(answer_file, header=None).dropna(how="all")
             else:
                 df_answers = pd.read_excel(answer_file, header=None, engine="openpyxl").dropna(how="all")
