@@ -45,10 +45,10 @@ def extract_key_number(filename: str) -> str:
 # Structured Outputs용 Pydantic Schema 정의
 class QuestionResult(BaseModel):
     number: str = Field(
-        description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '9', '11', '25')"
+        description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '9', '18', '25')"
     )
     student_answer: str = Field(
-        description="학생이 연필/펜으로 쓴 손글씨 알파벳을 글자 하나하나(Character by Character) 있는 그대로 정확히 추출하세요. 철자가 누락되었거나(예: 'unexpected' 대신 'unexpect' 작성), 오탈자가 있어도 절대로 올바른 단어로 보정하거나 완성하지 마세요. 비어있으면 '(공란)'"
+        description="학생이 연필/펜으로 쓴 손글씨 알파벳을 글자 하나하나(Character by Character) 있는 그대로 정확히 추출하세요. 'encourage'를 'encourge'처럼 중간에 알파벳 'a'나 다른 글자를 빼먹었으면 절대 보완하지 말고 빠진 그대로 적어야 합니다. 절대 자동 완성 금지. 비어있으면 '(공란)'"
     )
 
 
@@ -107,7 +107,7 @@ def is_english_text(text: str) -> bool:
 
 
 def evaluate_answer(student_ans: str, correct_ans: str) -> tuple[bool, str]:
-    """100% 엄격 철자 비교 함수"""
+    """100% 엄격 철자 비교 함수 (알파벳 누락/오탈자 철저 검증)"""
     raw_ans = student_ans.strip()
 
     # 1. 공란/미응답 감지
@@ -132,6 +132,7 @@ def evaluate_answer(student_ans: str, correct_ans: str) -> tuple[bool, str]:
     if norm_student == norm_correct:
         return True, "정답"
     else:
+        # 추가 안전 장치: 학생 답안과 정답의 글자 수나 구성이 다를 때 명확한 사유 표시
         return False, f"철자 불일치 (작성: '{raw_ans}' / 정답: '{correct_ans}')"
 
 
@@ -199,15 +200,15 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                 base64_image = compress_and_encode_image(photo, max_size=2400)
 
                 prompt = f"""
-                당신은 영단어 시험지의 학생 손글씨를 글자 단위(Character-by-Character)로 엄격하게 검증하는 정밀 OCR 채점관입니다.
+                당신은 영단어 시험지의 학생 손글씨를 글자 단위(Character-by-Character)로 아주 엄격하게 검증하는 정밀 OCR 채점관입니다.
 
                 [검사 대상 문항 목록]
                 {target_q_numbers}
 
-                [철자 추출 및 오답 검출 절대 규칙 - 필독!]
-                1. 철자가 빼먹혔거나, 오탈자가 있거나, 단어가 미완성된 경우(예: 'unexpected' 대신 'unexpect' 또는 'unexpectd'로 적힌 경우), 절대 올바른 정상 단어로 자동 보정/완성/추측하지 마세요!
-                2. 눈에 보이는 학생 손글씨 알파벳 그대로(Literal Characters) 아주 신중하고 똑똑하게 하나씩 읽어서 추출해야 합니다.
-                3. 시험지에 인쇄된 한글 뜻을 보고 정답 단어를 지어내거나 추측하는 행위는 절대 금지됩니다.
+                [철자 누락 및 오답 검출 절대 규칙 - 최우선 준수!]
+                1. 학생이 알파벳을 누락했거나(예: 'encourage'를 'encourge'로 씀), 오탈자가 있거나, 스펠링이 틀렸을 경우, 절대 올바른 정상 단어로 자동 보정하거나 채워 넣지 마세요!
+                2. 눈에 보이는 학생의 손글씨 알파벳 그대로(Literal Characters) 아주 정밀하게 읽어서 추출해야 합니다. 알파벳 하나가 빠졌으면 빠진 형태 그대로 추출하세요.
+                3. 시험지에 인쇄된 한글 뜻을 보고 정답 단어를 유추하거나 지어내는 행위는 절대 금지됩니다.
                 4. 연필/펜 획이 전혀 없는 빈칸 영역은 무조건 **student_answer를 "(공란)"**으로 작성하세요.
                 """
 
