@@ -179,28 +179,3 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
 
                 st.markdown(
                     f"#### 📄 [{idx+1}/{len(student_photos)}] 파일명: `{photo.name}` (번호: `{photo_key}`)"
-                )
-
-                matched_answer_file = answer_file_map.get(photo_key)
-                if not matched_answer_file:
-                    st.error(
-                        f"❌ `{photo.name}`에 매칭되는 정답지(`{photo_key}`)를 찾지 못했습니다."
-                    )
-                    continue
-
-                # 엑셀 파일의 A열(문항숫자)을 정규화하여 정답 딕셔너리로 로드
-                answer_dict = load_answer_dict_from_file(matched_answer_file)
-                base64_image = compress_and_encode_image(photo, max_size=3840)
-
-                prompt = """
-                당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도 빠짐없이 엄격하게 검증하는 OCR 판독관입니다.
-
-                [문항 번호 및 손글씨 필체 판독 핵심 규칙]
-                1. 시험지에 각 문항의 맨 앞에 적힌 숫자(문항 번호)를 정확히 읽어내어 number 필드에 기록하세요.
-                2. 학생의 필체 형태에 유의하세요:
-                   - 소문자 'a'는 학생이 윗고리를 열어서 적거나 빠르게 쓰면 'u'처럼 보일 수 있습니다. 단어 전체의 맥락을 살펴 학생이 'a'를 의도하여 작성했음이 명확하다면 'u'가 아닌 'a'로 정확히 판독하세요.
-                   - 유사하게 열린 필체의 알파벳(a/u, n/m, l/i, o/0 등)은 정황상 올바른 의도의 글자 형태로 정밀 검증하세요.
-                3. 알파벳 '하나하나'를 하이픈(-)으로 구분하여 적으세요.
-                   - 예시: 'v-a-l-u-a-b-l-e'
-                4. 학생이 명백하게 잘못된 철자를 썼거나(예: investor -> invester), 알파벳을 완전히 누락한 경우에는 정답으로 왜곡하지 말고 실제 쓴 철자 그대로 추출하세요.
-                5. 여러 단어로 구성
