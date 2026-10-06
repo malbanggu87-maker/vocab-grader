@@ -28,7 +28,7 @@ selected_model = st.sidebar.selectbox(
     "🤖 사용할 OpenAI 모델 선택",
     ["gpt-4o", "gpt-4o-mini"],
     index=0,
-    help="gpt-4o는 손글씨 및 철자 인식 정밀도가 가장 우수한 모델입니다.",
+    help="gpt-4o는 손글씨 및 공란 감지 정밀도가 가장 우수한 모델입니다.",
 )
 
 
@@ -45,10 +45,10 @@ def extract_key_number(filename: str) -> str:
 # Pydantic Schema 정의 (OpenAI Structured Outputs 용)
 class QuestionResult(BaseModel):
     number: str = Field(
-        description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '11', '25')"
+        description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '9', '11', '25')"
     )
     student_answer: str = Field(
-        description="학생이 작성한 알파벳 그대로를 추출한 문자열. 오탈자나 미완성 단어가 있어도 절대로 올바른 단어로 수정하지 말고 눈에 보이는 알파벳 그대로 표기하세요. 공란이면 '(공란)' 작성."
+        description="학생이 연필이나 펜으로 직접 쓴 영어 손글씨 문자열. 절대로 한글 뜻을 보고 단어를 연상하거나 추측하여 지어내지 마세요. 펜 획이 없는 비어있는 공간이면 무조건 '(공란)'이라고 명시해야 합니다."
     )
 
 
@@ -92,12 +92,11 @@ def compress_and_encode_image(uploaded_file, max_size=2400):
 
 
 def normalize_text(text: str) -> str:
-    """소문자 변환 및 양쪽 공백만 제거 (철자는 단 1글자도 변형하거나 삭제하지 않음)"""
+    """소문자 변환 및 양쪽 공백만 제거 (철자는 단 1글자도 변형하지 않음)"""
     if not text:
         return ""
     text = unicodedata.normalize("NFC", str(text))
     text = text.lower().strip()
-    # 연속된 내부 공백만 1개로 축소
     text = re.sub(r"\s+", " ", text)
     return text
 
@@ -200,21 +199,20 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                 base64_image = compress_and_encode_image(photo, max_size=2400)
 
                 prompt = f"""
-                당신은 영단어 시험지의 학생 손글씨를 정밀 OCR하는 판독관입니다.
+                당신은 영단어 시험지의 학생 손글씨를 정밀 OCR하는 엄격한 검사관입니다.
 
                 [검사 대상 문항 목록]
                 {target_q_numbers}
 
-                [철자 판독 절대 규칙 - 매우 중요]
-                1. 학생이 쓴 글씨를 추측하거나 올바른 단어로 **자동 보정(Auto-complete)하지 마십시오.**
-                   - 예: 정답이 'unexpected'이더라도 학생이 'unexpect'라고만 적었으면 **반드시 'unexpect'로만 추출**해야 합니다.
-                   - 철자 하나, 알파벳 어미(ed, s, ing 등)가 빠지거나 틀린 경우에도 이미지에 적힌 알파벳 그대로 기록하세요.
-                2. 문항 번호와 작성 칸을 정확히 1:1 매칭하세요.
-                   - 답안란에 글씨가 전혀 없이 깨끗하게 비어있는 공란은 무조건 "(공란)"으로 입력하세요.
+                [공란 및 환각(Hallucination) 방지 절대 규칙 - 가장 중요!]
+                1. 시험지에 인쇄된 한글 뜻(예: '주요한, 주된')을 보고 지식에 기반하여 단어(예: 'important', 'prime' 등)를 절대로 추측하거나 지어내지 마십시오.
+                2. 문항 번호 오른쪽에 연필/펜으로 쓰인 학생의 실제 손글씨 획(stroke)이 관찰되지 않는 완벽한 백지 상태면, 무조건 **student_answer를 "(공란)"**으로 적으세요.
+                3. 학생 손글씨가 있는 경우에만 철자를 있는 그대로 정확히 추출하세요. 오탈자나 미완성 단어도 수정하지 마세요.
                 """
 
                 response = client.beta.chat.completions.parse(
                     model=selected_model,
+                    temperature=0.0,  # 환각 및 추측을 방지하기 위해 temperature를 0으로 설정
                     messages=[{
                         "role": "user",
                         "content": [
