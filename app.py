@@ -48,7 +48,7 @@ class QuestionResult(BaseModel):
         description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '9', '11', '25')"
     )
     student_answer: str = Field(
-        description="학생이 연필이나 펜으로 직접 쓴 영어 손글씨 문자열. 절대로 한글 뜻을 보고 단어를 연상하거나 추측하여 지어내지 마세요. 펜 획이 없는 비어있는 공간이면 무조건 '(공란)'이라고 명시해야 합니다."
+        description="학생이 손글씨로 쓴 문자열을 눈에 보이는 그대로(Literal) 추출하세요. 절대로 단어를 자동으로 완성하거나 철자를 교정/보정하지 마세요. (예: 'unexpect'라고 적혀있으면 'unexpected'로 수정하지 말고 반드시 'unexpect'로 추출). 비어있으면 '(공란)'"
     )
 
 
@@ -199,20 +199,21 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                 base64_image = compress_and_encode_image(photo, max_size=2400)
 
                 prompt = f"""
-                당신은 영단어 시험지의 학생 손글씨를 정밀 OCR하는 엄격한 검사관입니다.
+                당신은 영단어 시험지의 학생 손글씨를 철저히 글자 단위(Character-by-Character)로 정밀 OCR하는 엄격한 검사관입니다.
 
                 [검사 대상 문항 목록]
                 {target_q_numbers}
 
-                [공란 및 환각(Hallucination) 방지 절대 규칙 - 가장 중요!]
-                1. 시험지에 인쇄된 한글 뜻(예: '주요한, 주된')을 보고 지식에 기반하여 단어(예: 'important', 'prime' 등)를 절대로 추측하거나 지어내지 마십시오.
-                2. 문항 번호 오른쪽에 연필/펜으로 쓰인 학생의 실제 손글씨 획(stroke)이 관찰되지 않는 완벽한 백지 상태면, 무조건 **student_answer를 "(공란)"**으로 적으세요.
-                3. 학생 손글씨가 있는 경우에만 철자를 있는 그대로 정확히 추출하세요. 오탈자나 미완성 단어도 수정하지 마세요.
+                [철자 추출 및 오답 검출 절대 규칙 - 필수 준수!]
+                1. 학생이 철자를 틀렸거나 단어를 덜 썼더라도(예: 'unexpect'), 절대로 문맥상 알맞은 정상 단어('unexpected')로 자동 완성하거나 교정하지 마세요!
+                2. 눈에 보이는 손글씨 철자 그대로(Raw Literal Characters) 엄격하게 인식하여 추출하세요.
+                3. 시험지에 인쇄된 한글 뜻을 보고 단어를 연상/추측하여 작성하는 것은 절대 금지합니다.
+                4. 연필/펜 획이 전혀 없는 완벽한 백지 상태는 무조건 **student_answer를 "(공란)"**으로 작성하세요.
                 """
 
                 response = client.beta.chat.completions.parse(
                     model=selected_model,
-                    temperature=0.0,  # 환각 및 추측을 방지하기 위해 temperature를 0으로 설정
+                    temperature=0.0,
                     messages=[{
                         "role": "user",
                         "content": [
