@@ -143,7 +143,6 @@ def load_answer_dict_from_file(ans_file) -> dict:
             io.BytesIO(answer_bytes), header=None, engine="openpyxl"
         ).dropna(how="all")
 
-    # A행(0번 열)을 문항 번호로 정규화하여 Key로 저장
     raw_q_nums = df_sub.iloc[:, 0].astype(str)
     raw_q_ans = df_sub.iloc[:, 1].astype(str).str.strip()
 
@@ -171,11 +170,4 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
         )
     else:
         try:
-            client = OpenAI(api_key=api_key)
-            st.markdown("### 📊 채점 결과")
-
-            for idx, photo in enumerate(student_photos):
-                photo_key = extract_key_number(photo.name)
-
-                st.markdown(
-                    f"#### 📄 [{idx+1}/{len(student_photos)}] 파일명: `{photo.name}` (번호: `{photo_key}`)"
+            client = OpenAI(api_key=api
