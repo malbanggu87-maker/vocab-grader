@@ -28,7 +28,7 @@ selected_model = st.sidebar.selectbox(
     "🤖 사용할 OpenAI 모델 선택",
     ["gpt-4o", "gpt-4o-mini"],
     index=0,
-    help="gpt-4o는 손글씨 및 공란 감지 정밀도가 가장 우수한 모델입니다.",
+    help="gpt-4o는 손글씨 및 철자 정밀 검증에 가장 우수한 성능을 보입니다.",
 )
 
 
@@ -42,13 +42,13 @@ def extract_key_number(filename: str) -> str:
     return ""
 
 
-# Pydantic Schema 정의 (OpenAI Structured Outputs 용)
+# Structured Outputs용 Pydantic Schema 정의
 class QuestionResult(BaseModel):
     number: str = Field(
         description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '9', '11', '25')"
     )
     student_answer: str = Field(
-        description="학생이 손글씨로 쓴 문자열을 눈에 보이는 그대로(Literal) 추출하세요. 절대로 단어를 자동으로 완성하거나 철자를 교정/보정하지 마세요. (예: 'unexpect'라고 적혀있으면 'unexpected'로 수정하지 말고 반드시 'unexpect'로 추출). 비어있으면 '(공란)'"
+        description="학생이 연필/펜으로 쓴 손글씨 알파벳을 글자 하나하나(Character by Character) 있는 그대로 정확히 추출하세요. 철자가 누락되었거나(예: 'unexpected' 대신 'unexpect' 작성), 오탈자가 있어도 절대로 올바른 단어로 보정하거나 완성하지 마세요. 비어있으면 '(공란)'"
     )
 
 
@@ -199,16 +199,16 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                 base64_image = compress_and_encode_image(photo, max_size=2400)
 
                 prompt = f"""
-                당신은 영단어 시험지의 학생 손글씨를 철저히 글자 단위(Character-by-Character)로 정밀 OCR하는 엄격한 검사관입니다.
+                당신은 영단어 시험지의 학생 손글씨를 글자 단위(Character-by-Character)로 엄격하게 검증하는 정밀 OCR 채점관입니다.
 
                 [검사 대상 문항 목록]
                 {target_q_numbers}
 
-                [철자 추출 및 오답 검출 절대 규칙 - 필수 준수!]
-                1. 학생이 철자를 틀렸거나 단어를 덜 썼더라도(예: 'unexpect'), 절대로 문맥상 알맞은 정상 단어('unexpected')로 자동 완성하거나 교정하지 마세요!
-                2. 눈에 보이는 손글씨 철자 그대로(Raw Literal Characters) 엄격하게 인식하여 추출하세요.
-                3. 시험지에 인쇄된 한글 뜻을 보고 단어를 연상/추측하여 작성하는 것은 절대 금지합니다.
-                4. 연필/펜 획이 전혀 없는 완벽한 백지 상태는 무조건 **student_answer를 "(공란)"**으로 작성하세요.
+                [철자 추출 및 오답 검출 절대 규칙 - 필독!]
+                1. 철자가 빼먹혔거나, 오탈자가 있거나, 단어가 미완성된 경우(예: 'unexpected' 대신 'unexpect' 또는 'unexpectd'로 적힌 경우), 절대 올바른 정상 단어로 자동 보정/완성/추측하지 마세요!
+                2. 눈에 보이는 학생 손글씨 알파벳 그대로(Literal Characters) 아주 신중하고 똑똑하게 하나씩 읽어서 추출해야 합니다.
+                3. 시험지에 인쇄된 한글 뜻을 보고 정답 단어를 지어내거나 추측하는 행위는 절대 금지됩니다.
+                4. 연필/펜 획이 전혀 없는 빈칸 영역은 무조건 **student_answer를 "(공란)"**으로 작성하세요.
                 """
 
                 response = client.beta.chat.completions.parse(
