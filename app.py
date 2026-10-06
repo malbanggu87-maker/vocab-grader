@@ -45,10 +45,10 @@ def extract_key_number(filename: str) -> str:
 # Structured Outputs용 Pydantic Schema 정의
 class QuestionResult(BaseModel):
     number: str = Field(
-        description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '9', '18', '25')"
+        description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '18', '25')"
     )
     student_answer: str = Field(
-        description="학생이 연필/펜으로 쓴 손글씨 알파벳을 글자 하나하나(Character by Character) 있는 그대로 정확히 추출하세요. 'encourage'를 'encourge'처럼 중간에 알파벳 'a'나 다른 글자를 빼먹었으면 절대 보완하지 말고 빠진 그대로 적어야 합니다. 절대 자동 완성 금지. 비어있으면 '(공란)'"
+        description="학생이 손글씨로 쓴 알파벳을 '있는 그대로' 추출하세요. 정답과 비교했을 때 알파벳이 누락되었거나 틀렸다면, 절대 정답 단어로 보정하지 말고 학생이 실제로 쓴 오탈자 형태(예: 'encourge') 그대로 적어야 합니다. 비어있으면 '(공란)'"
     )
 
 
@@ -132,7 +132,6 @@ def evaluate_answer(student_ans: str, correct_ans: str) -> tuple[bool, str]:
     if norm_student == norm_correct:
         return True, "정답"
     else:
-        # 추가 안전 장치: 학생 답안과 정답의 글자 수나 구성이 다를 때 명확한 사유 표시
         return False, f"철자 불일치 (작성: '{raw_ans}' / 정답: '{correct_ans}')"
 
 
@@ -193,23 +192,30 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                     continue
 
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
-                target_q_numbers = [
-                    str(k).replace(".0", "").strip() for k in answer_dict.keys()
-                ]
+
+                # 각 문항 번호와 실제 정답을 프롬프트에 구체적으로 제공하여 AI의 환각/자동완성 방지
+                target_info_list = []
+                for q_num, c_ans in answer_dict.items():
+                    q_num_str = str(q_num).replace(".0", "").strip()
+                    target_info_list.append(
+                        f"문항 {q_num_str}: 정답은 '{str(c_ans).strip()}'"
+                    )
+
+                target_info_str = "\n".join(target_info_list)
 
                 base64_image = compress_and_encode_image(photo, max_size=2400)
 
                 prompt = f"""
-                당신은 영단어 시험지의 학생 손글씨를 글자 단위(Character-by-Character)로 아주 엄격하게 검증하는 정밀 OCR 채점관입니다.
+                당신은 영단어 시험지의 학생 손글씨를 아주 매섭게 검증하는 엄격한 AI 채점관입니다.
 
-                [검사 대상 문항 목록]
-                {target_q_numbers}
+                [참고: 각 문항의 교재 정답 데이터]
+                {target_info_str}
 
                 [철자 누락 및 오답 검출 절대 규칙 - 최우선 준수!]
-                1. 학생이 알파벳을 누락했거나(예: 'encourage'를 'encourge'로 씀), 오탈자가 있거나, 스펠링이 틀렸을 경우, 절대 올바른 정상 단어로 자동 보정하거나 채워 넣지 마세요!
-                2. 눈에 보이는 학생의 손글씨 알파벳 그대로(Literal Characters) 아주 정밀하게 읽어서 추출해야 합니다. 알파벳 하나가 빠졌으면 빠진 형태 그대로 추출하세요.
-                3. 시험지에 인쇄된 한글 뜻을 보고 정답 단어를 유추하거나 지어내는 행위는 절대 금지됩니다.
-                4. 연필/펜 획이 전혀 없는 빈칸 영역은 무조건 **student_answer를 "(공란)"**으로 작성하세요.
+                1. 학생이 쓴 손글씨와 위 [교재 정답 데이터]를 문항별로 엄격하게 비교하세요.
+                2. 만약 학생이 알파벳을 빼먹었거나(예: 정답이 'encourage'인데 학생이 'encourge'로 쓴 경우), 오탈자가 있거나, 철자가 틀렸다면 **절대 교재 정답 단어로 자동 보정하거나 완성해서는 안 됩니다!**
+                3. 반드시 학생이 실제 손글씨로 적은 결함 있는 글자 형태 그대로(예: 'encourge') `student_answer`에 추출해야 합니다. 정답대로 고쳐서 적으면 치명적인 채점 오류가 됩니다.
+                4. 연필/펜 획이 전혀 없는 빈칸 영역은 무조건 **"(공란)"**으로 작성하세요.
                 """
 
                 response = client.beta.chat.completions.parse(
