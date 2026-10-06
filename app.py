@@ -73,7 +73,8 @@ answer_files = st.file_uploader(
 )
 
 
-def compress_and_encode_image(uploaded_file, max_size=2400):
+def compress_and_encode_image(uploaded_file, max_size=3840):
+    """손글씨 세밀 인식을 위해 해상도를 최대 3840px(4K)로 확대 및 화질 손실 최소화"""
     file_bytes = uploaded_file.getvalue()
     image = Image.open(io.BytesIO(file_bytes))
 
@@ -85,9 +86,11 @@ def compress_and_encode_image(uploaded_file, max_size=2400):
     if image.mode != "RGB":
         image = image.convert("RGB")
 
+    # 고해상도 리사이징 (기존 2400 -> 3840으로 확대하여 획 선명도 유지)
     image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=95)
+    # quality=98 및 subsampling=0 적용으로 세밀한 알파벳 형태 보존
+    image.save(buffer, format="JPEG", quality=98, subsampling=0)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
@@ -97,7 +100,6 @@ def clean_spelled_letters(raw_letters: str) -> str:
         return ""
     text = unicodedata.normalize("NFC", str(raw_letters))
     text = text.lower().strip()
-    # 단어별로 하이픈 제거 후 공백 정리
     words = text.split()
     cleaned_words = [w.replace("-", "").strip() for w in words]
     return " ".join([cw for cw in cleaned_words if cw])
@@ -175,7 +177,8 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                     continue
 
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
-                base64_image = compress_and_encode_image(photo, max_size=2400)
+                # 이미지 해상도를 3840px로 확장하여 인코딩
+                base64_image = compress_and_encode_image(photo, max_size=3840)
 
                 prompt = """
                 당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도 빠짐없이 엄격하게 검증하는 OCR 판독관입니다.
