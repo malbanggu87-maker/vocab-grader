@@ -42,16 +42,13 @@ def extract_key_number(filename: str) -> str:
     return ""
 
 
-# Structured Outputs용 Pydantic Schema 정의 (정오판정을 직접 받음)
+# AI 자동완성 방지를 위한 하이픈 분리 Pydantic Schema
 class QuestionResult(BaseModel):
     number: str = Field(
         description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '18', '25')"
     )
-    student_answer: str = Field(
-        description="학생이 손글씨로 쓴 답안 내용 또는 '(공란)'"
-    )
-    is_exact_match: bool = Field(
-        description="교재 정답의 스펠링과 학생의 손글씨 스펠링이 알파벳 하나도 틀림없이 100% 완벽히 일치하면 true, 중간에 알파벳이 누락되었거나(예: 'encourage'에 대해 'encourge' 작성), 오탈자가 있거나, 틀렸으면 무조건 false를 입력하세요."
+    spelled_out_letters: str = Field(
+        description="학생이 손글씨로 쓴 알파벳을 절대로 단어로 완성하지 말고, 눈에 보이는 알파벳 '하나하나'를 하이픈(-)으로 나누어 적으세요. 예: 'e-n-c-o-u-r-g-e'. 빠진 알파벳이 있다면 그 빠진 상태 그대로 한 글자씩 적어야 합니다. 비어있으면 '(미응답)'"
     )
 
 
@@ -94,8 +91,17 @@ def compress_and_encode_image(uploaded_file, max_size=2400):
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
+def clean_spelled_letters(raw_letters: str) -> str:
+    """하이픈 및 공백을 제거하여 실제 단어로 복원 (소문자화)"""
+    if not raw_letters:
+        return ""
+    text = raw_letters.replace("-", "").replace(" ", "")
+    text = unicodedata.normalize("NFC", text)
+    return text.lower().strip()
+
+
 def normalize_text(text: str) -> str:
-    """소문자 변환 및 양쪽 공백만 제거"""
+    """소문자 변환 및 연속 공백 정리"""
     if not text:
         return ""
     text = unicodedata.normalize("NFC", str(text))
@@ -167,28 +173,19 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
 
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
 
-                target_info_list = []
-                for q_num, c_ans in answer_dict.items():
-                    q_num_str = str(q_num).replace(".0", "").strip()
-                    target_info_list.append(
-                        f"문항 {q_num_str}: 정답은 '{str(c_ans).strip()}'"
-                    )
-
-                target_info_str = "\n".join(target_info_list)
-
                 base64_image = compress_and_encode_image(photo, max_size=2400)
 
-                prompt = f"""
-                당신은 영단어 시험지의 학생 손글씨를 아주 매섭고 엄격하게 검증하는 AI 채점관입니다.
+                prompt = """
+                당신은 영단어 시험지의 학생 손글씨를 정밀 검증하는 OCR 판독관입니다.
 
-                [참고: 각 문항의 교재 정답 데이터]
-                {target_info_str}
-
-                [철자 누락 및 오답 검출 절대 규칙 - 최우선 준수!]
-                1. 각 문항별로 학생의 손글씨와 위 [교재 정답 데이터]를 알파벳 단위로 아주 꼼꼼하게 비교하세요.
-                2. 만약 알파벳이 하나라도 빠졌거나(예: 'encourage'에 대해 'encourge'라고 적은 경우), 철자가 틀렸거나, 오탈자가 있다면 **is_exact_match를 무조건 false**로 설정하세요.
-                3. 오직 알파벳 스펠링이 공백까지 포함하여 교재 정답과 100% 완벽하게 일치할 때만 is_exact_match를 true로 설정하세요.
-                4. 연필/펜 획이 전혀 없는 빈칸 영역은 student_answer를 "(공란)", is_exact_match를 false로 설정하세요.
+                [철자 분리 판독 핵심 규칙]
+                1. 학생이 적은 손글씨 단어를 볼 때, 절대로 올바른 단어로 보정하거나 빠진 알파벳을 추측해서 채우지 마세요.
+                2. 이미지에 써진 글자 그대로 "알파벳 하나하나를 하이픈(-)으로 구분"해서 적으세요.
+                   - 예시: 학생이 'encourage'에서 'a'를 빼먹고 'encourge'라고 적었다면 -> "e-n-c-o-u-r-g-e" 로 작성해야 합니다.
+                   - 예시: 학생이 'investor'를 'invester'라고 적었다면 -> "i-n-v-e-s-t-e-r" 로 작성해야 합니다.
+                3. 여러 단어로 구성된 문장/구 답안인 경우 단어와 단어 사이는 공백을 두고 알파벳을 하이픈으로 나누세요.
+                   - 예시: "p-e-r-m-a-n-e-n-t l-i-v-i-n-g"
+                4. 글자가 작성되어 있지 않은 빈칸은 "(미응답)"으로 적으세요.
                 """
 
                 response = client.beta.chat.completions.parse(
@@ -211,60 +208,49 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                 )
 
                 parsed_data = response.choices[0].message.parsed
-                gpt_results = {}
+                gpt_parsed = {}
                 if parsed_data and parsed_data.details:
                     for item in parsed_data.details:
                         q_num = str(item.number).replace(".0", "").strip()
-                        gpt_results[q_num] = {
-                            "student_answer": str(
-                                item.student_answer
-                            ).strip(),
-                            "is_exact_match": item.is_exact_match,
-                        }
+                        gpt_parsed[q_num] = str(
+                            item.spelled_out_letters
+                        ).strip()
 
                 records = []
                 for q_num, c_ans in answer_dict.items():
                     q_num_str = str(q_num).replace(".0", "").strip()
-                    res_info = gpt_results.get(
-                        q_num_str,
-                        {"student_answer": "(공란)", "is_exact_match": False},
-                    )
+                    raw_spelled = gpt_parsed.get(q_num_str, "(미응답)")
 
-                    raw_s_ans = res_info["student_answer"]
-                    ai_match = res_info["is_exact_match"]
-
-                    # 이중 안전 장치: 파이썬 레벨에서도 정규화 후 직접 철자 비교 수행
-                    norm_student = normalize_text(raw_s_ans)
-                    norm_correct = normalize_text(str(c_ans))
-
-                    if not raw_s_ans or raw_s_ans in [
+                    if raw_spelled in [
+                        "(미응답)",
+                        "미응답",
                         "(공란)",
                         "공란",
-                        "미응답",
-                        "(미응답)",
                         "none",
                         "null",
+                        "",
                     ]:
-                        display_s_ans = "(공란)"
+                        student_word = "(미응답)"
                         is_correct = False
                         reason = "미응답 (공란)"
-                    elif not is_english_text(raw_s_ans):
-                        display_s_ans = raw_s_ans
-                        is_correct = False
-                        reason = "영단어 미작성"
                     else:
-                        display_s_ans = raw_s_ans
-                        # AI가 맞았다고 했어도 파이썬에서 철자가 다르면 무조건 오답 처리!
-                        if ai_match and (norm_student == norm_correct):
+                        # 하이픈을 제거하여 실제 작성한 단어로 조합
+                        student_word = clean_spelled_letters(raw_spelled)
+                        correct_word = normalize_text(str(c_ans))
+
+                        if not is_english_text(student_word):
+                            is_correct = False
+                            reason = "영단어 미작성"
+                        elif student_word == correct_word:
                             is_correct = True
                             reason = "정답"
                         else:
                             is_correct = False
-                            reason = f"철자 불일치 (작성: '{raw_s_ans}' / 정답: '{c_ans}')"
+                            reason = f"철자 불일치 (작성: '{student_word}' / 정답: '{correct_word}')"
 
                     records.append({
                         "문항 번호": q_num_str,
-                        "학생 작성 답안": display_s_ans,
+                        "학생 작성 답안": student_word,
                         "교재 정답": str(c_ans).strip(),
                         "정오답": is_correct,
                         "사유": reason,
