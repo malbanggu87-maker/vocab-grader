@@ -42,6 +42,18 @@ def extract_key_number(filename: str) -> str:
     return ""
 
 
+def normalize_q_num(q_str: str) -> str:
+    """문항 번호 정규화 (예: '1.', '1번', '01' -> '1')"""
+    if not q_str:
+        return ""
+    q_clean = str(q_str).strip()
+    q_clean = re.sub(r"\.0$", "", q_clean)
+    q_clean = re.sub(r"[^\d]", "", q_clean)
+    if q_clean.isdigit():
+        return str(int(q_clean))
+    return str(q_str).strip()
+
+
 # AI 자동완성 및 자체 보정 방지를 위한 Pydantic Schema
 class QuestionResult(BaseModel):
     number: str = Field(
@@ -86,7 +98,6 @@ def compress_and_encode_image(uploaded_file, max_size=3840):
     if image.mode != "RGB":
         image = image.convert("RGB")
 
-    # 고해상도 리사이징
     image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=98, subsampling=0)
@@ -132,15 +143,17 @@ def load_answer_dict_from_file(ans_file) -> dict:
             io.BytesIO(answer_bytes), header=None, engine="openpyxl"
         ).dropna(how="all")
 
-    q_nums = (
-        df_sub.iloc[:, 0]
-        .astype(str)
-        .str.replace(r"\.0$", "", regex=True)
-        .str.strip()
-    )
-    q_ans = df_sub.iloc[:, 1].astype(str).str.strip()
+    # A행(0번 열)을 문항 번호로 정규화하여 Key로 저장
+    raw_q_nums = df_sub.iloc[:, 0].astype(str)
+    raw_q_ans = df_sub.iloc[:, 1].astype(str).str.strip()
 
-    return dict(zip(q_nums, q_ans))
+    ans_dict = {}
+    for q_n, q_a in zip(raw_q_nums, raw_q_ans):
+        norm_key = normalize_q_num(q_n)
+        if norm_key:
+            ans_dict[norm_key] = q_a
+
+    return ans_dict
 
 
 answer_file_map = {}
@@ -175,130 +188,19 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                     )
                     continue
 
+                # 엑셀 파일의 A열(문항숫자)을 정규화하여 정답 딕셔너리로 로드
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
                 prompt = """
                 당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도 빠짐없이 엄격하게 검증하는 OCR 판독관입니다.
 
-                [손글씨 필체 판독 핵심 규칙]
-                1. 학생의 필체 형태에 유의하세요:
+                [문항 번호 및 손글씨 필체 판독 핵심 규칙]
+                1. 시험지에 각 문항의 맨 앞에 적힌 숫자(문항 번호)를 정확히 읽어내어 number 필드에 기록하세요.
+                2. 학생의 필체 형태에 유의하세요:
                    - 소문자 'a'는 학생이 윗고리를 열어서 적거나 빠르게 쓰면 'u'처럼 보일 수 있습니다. 단어 전체의 맥락을 살펴 학생이 'a'를 의도하여 작성했음이 명확하다면 'u'가 아닌 'a'로 정확히 판독하세요.
                    - 유사하게 열린 필체의 알파벳(a/u, n/m, l/i, o/0 등)은 정황상 올바른 의도의 글자 형태로 정밀 검증하세요.
-                2. 알파벳 '하나하나'를 하이픈(-)으로 구분하여 적으세요.
+                3. 알파벳 '하나하나'를 하이픈(-)으로 구분하여 적으세요.
                    - 예시: 'v-a-l-u-a-b-l-e'
-                3. 학생이 명백하게 잘못된 철자를 썼거나(예: investor -> invester), 알파벳을 완전히 누락한 경우에는 정답으로 왜곡하지 말고 실제 쓴 철자 그대로 추출하세요.
-                4. 여러 단어로 구성된 영어 문장/구 문제의 경우, 각각의 단어를 독립적인 단어로 인식하고 단어와 단어 사이는 공백을 둔 채 각 단어 내의 알파벳을 하이픈(-)으로 나누어 적으세요.
-                   - 예시: "p-e-r-m-a-n-e-n-t l-i-v-i-n-g"
-                5. 글자가 작성되어 있지 않거나 공란인 경우, 알파벳이 전혀 없는 경우는 무조건 "(미응답)"으로 적으세요.
-                """
-
-                response = client.beta.chat.completions.parse(
-                    model=selected_model,
-                    temperature=0.0,
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}",
-                                    "detail": "high",
-                                },
-                            },
-                        ],
-                    }],
-                    response_format=GradingSchema,
-                )
-
-                parsed_data = response.choices[0].message.parsed
-                gpt_parsed = {}
-                if parsed_data and parsed_data.details:
-                    for item in parsed_data.details:
-                        q_num = str(item.number).replace(".0", "").strip()
-                        gpt_parsed[q_num] = str(
-                            item.spelled_out_letters
-                        ).strip()
-
-                records = []
-                for q_num, c_ans in answer_dict.items():
-                    q_num_str = str(q_num).replace(".0", "").strip()
-                    raw_spelled = gpt_parsed.get(q_num_str, "(미응답)")
-
-                    if raw_spelled in [
-                        "(미응답)",
-                        "미응답",
-                        "(공란)",
-                        "공란",
-                        "none",
-                        "null",
-                        "",
-                    ]:
-                        student_word = "(미응답)"
-                        is_correct = False
-                        reason = "미응답 (공란)"
-                    else:
-                        student_word = clean_spelled_letters(raw_spelled)
-                        correct_word = normalize_text(str(c_ans))
-
-                        if not is_english_text(student_word):
-                            is_correct = False
-                            reason = "영단어 미작성"
-                        elif student_word == correct_word:
-                            is_correct = True
-                            reason = "정답"
-                        else:
-                            is_correct = False
-                            reason = f"철자 불일치 또는 누락 (작성: '{student_word}' / 정답: '{correct_word}')"
-
-                    records.append({
-                        "문항 번호": q_num_str,
-                        "학생 작성 답안": student_word,
-                        "교재 정답": str(c_ans).strip(),
-                        "정오답": is_correct,
-                        "사유": reason,
-                    })
-
-                total_q_count = len(records)
-                total_correct = sum(1 for r in records if r["정오답"])
-                wrong_count = total_q_count - total_correct
-
-                wrong_details = [
-                    {
-                        "문항 번호": r["문항 번호"],
-                        "학생 작성 답안": r["학생 작성 답안"],
-                        "교재 정답": r["교재 정답"],
-                        "사유": r["사유"],
-                    }
-                    for r in records
-                    if not r["정오답"]
-                ]
-
-                st.info(
-                    f"결과: **{total_correct} / {total_q_count}점** (틀린 문항: {wrong_count}개)"
-                )
-
-                if wrong_details:
-                    df_wrong = pd.DataFrame(wrong_details)
-                    st.dataframe(
-                        df_wrong, use_container_width=True, hide_index=True
-                    )
-
-                    csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
-                    safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
-                    st.download_button(
-                        label=f"📥 `{photo.name}` 오답노트 다운로드 (CSV)",
-                        data=csv_data,
-                        file_name=f"오답노트_{safe_filename}.csv",
-                        mime="text/csv",
-                        key=f"dl_{idx}",
-                    )
-                else:
-                    st.balloons()
-                    st.success("🎉 모든 문항을 맞혔습니다!")
-
-                st.markdown("---")
-
-        except Exception as e:
-            st.error(f"채점 중 오류가 발생했습니다: {e}")
+                4. 학생이 명백하게 잘못된 철자를 썼거나(예: investor -> invester), 알파벳을 완전히 누락한 경우에는 정답으로 왜곡하지 말고 실제 쓴 철자 그대로 추출하세요.
+                5. 여러 단어로 구성
