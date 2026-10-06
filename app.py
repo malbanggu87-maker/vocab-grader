@@ -48,7 +48,7 @@ class QuestionResult(BaseModel):
         description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '18', '25')"
     )
     spelled_out_letters: str = Field(
-        description="학생이 손글씨로 쓴 글자를 절대로 임의로 완성하거나 빠진 알파벳을 채우지 마세요. 눈에 보이는 알파벳 '하나하나'를 하이픈(-)으로 나누어 적으세요. 예: 'encourage'에서 a가 빠졌으면 'e-n-c-o-u-r-g-e'. 문장/구의 경우 단어와 단어 사이는 공백을 두고 각각의 단어 내 알파벳을 하이픈으로 나누세요 (예: 'p-e-r-m-a-n-e-n-t l-i-v-i-n-g'). 비어있거나 작성되지 않은 경우 '(미응답)'"
+        description="학생이 손글씨로 쓴 글자를 눈에 보이는 알파벳 '하나하나'를 하이픈(-)으로 나누어 적으세요. 예: 'encourage'에서 a가 빠졌으면 'e-n-c-o-u-r-g-e'. 문장/구의 경우 단어와 단어 사이는 공백을 두고 각각의 단어 내 알파벳을 하이픈으로 나누세요 (예: 'p-e-r-m-a-n-e-n-t l-i-v-i-n-g'). 비어있거나 작성되지 않은 경우 '(미응답)'"
     )
 
 
@@ -86,10 +86,9 @@ def compress_and_encode_image(uploaded_file, max_size=3840):
     if image.mode != "RGB":
         image = image.convert("RGB")
 
-    # 고해상도 리사이징 (기존 2400 -> 3840으로 확대하여 획 선명도 유지)
+    # 고해상도 리사이징
     image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     buffer = io.BytesIO()
-    # quality=98 및 subsampling=0 적용으로 세밀한 알파벳 형태 보존
     image.save(buffer, format="JPEG", quality=98, subsampling=0)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
@@ -177,17 +176,18 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                     continue
 
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
-                # 이미지 해상도를 3840px로 확장하여 인코딩
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
                 prompt = """
                 당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도 빠짐없이 엄격하게 검증하는 OCR 판독관입니다.
 
-                [철자 분리 판독 핵심 규칙 (자체 보정 절대 금지)]
-                1. 학생이 적은 손글씨 답안을 볼 때, 절대 올바른 단어로 자동 완성하거나 누락된 알파벳, 틀린 알파벳을 마음대로 보정/수정해서는 안 됩니다.
-                2. 학생이 적은 그대로의 철자를 반영해야 합니다. 철자가 틀렸거나(예: investor를 invester로 씀), 알파벳 하나가 누락되었거나(예: encourage를 encourge로 씀), 철자 순서가 바뀌었으면 그 상태 그대로 추출해야 합니다.
-                3. 알파벳 '하나하나'를 하이픈(-)으로 구분하여 적으세요.
-                   - 예시: 'e-n-c-o-u-r-g-e' (a가 빠진 경우)
+                [손글씨 필체 판독 핵심 규칙]
+                1. 학생의 필체 형태에 유의하세요:
+                   - 소문자 'a'는 학생이 윗고리를 열어서 적거나 빠르게 쓰면 'u'처럼 보일 수 있습니다. 단어 전체의 맥락을 살펴 학생이 'a'를 의도하여 작성했음이 명확하다면 'u'가 아닌 'a'로 정확히 판독하세요.
+                   - 유사하게 열린 필체의 알파벳(a/u, n/m, l/i, o/0 등)은 정황상 올바른 의도의 글자 형태로 정밀 검증하세요.
+                2. 알파벳 '하나하나'를 하이픈(-)으로 구분하여 적으세요.
+                   - 예시: 'v-a-l-u-a-b-l-e'
+                3. 학생이 명백하게 잘못된 철자를 썼거나(예: investor -> invester), 알파벳을 완전히 누락한 경우에는 정답으로 왜곡하지 말고 실제 쓴 철자 그대로 추출하세요.
                 4. 여러 단어로 구성된 영어 문장/구 문제의 경우, 각각의 단어를 독립적인 단어로 인식하고 단어와 단어 사이는 공백을 둔 채 각 단어 내의 알파벳을 하이픈(-)으로 나누어 적으세요.
                    - 예시: "p-e-r-m-a-n-e-n-t l-i-v-i-n-g"
                 5. 글자가 작성되어 있지 않거나 공란인 경우, 알파벳이 전혀 없는 경우는 무조건 "(미응답)"으로 적으세요.
