@@ -6,6 +6,9 @@ import unicodedata
 from PIL import Image, ImageOps
 from openai import OpenAI
 import pandas as pd
+
+# Pydantic을 이용한 Strict JSON Response 구조 정의 (OpenAI 강제 응답용)
+from pydantic import BaseModel, Field
 import streamlit as st
 
 st.set_page_config(
@@ -24,6 +27,13 @@ if "OPENAI_API_KEY" in st.secrets:
 else:
     api_key = st.sidebar.text_input("OpenAI API Key 입력", type="password")
 
+selected_model = st.sidebar.selectbox(
+    "🤖 사용할 OpenAI 모델 선택",
+    ["gpt-4o", "gpt-4o-mini"],
+    index=0,
+    help="gpt-4o는 손글씨 및 공란 감지 능력이 가장 우수한 플래그십 모델입니다.",
+)
+
 
 def extract_key_number(filename: str) -> str:
     """파일명에서 끝쪽 숫자 2자리를 추출 (숫자 1자리만 있는 경우 01 형태로 정규화)"""
@@ -33,6 +43,20 @@ def extract_key_number(filename: str) -> str:
         last_num = numbers[-1]
         return last_num.zfill(2)[-2:]
     return ""
+
+
+# ---------------------------------------------------------
+# Pydantic Schema 정의 (OpenAI Structured Outputs 용)
+# ---------------------------------------------------------
+class QuestionResult(BaseModel):
+    number: str = Field(description="문항 번호 (예: '1', '2', '01')")
+    student_answer: str = Field(
+        description="학생이 답안란/빈칸에 쓴 영어 단어. 만약 답안란에 아무것도 적혀있지 않고 완전히 비어있다면 반드시 '(공란)'이라고 명시하세요."
+    )
+
+
+class GradingSchema(BaseModel):
+    details: list[QuestionResult]
 
 
 # ---------------------------------------------------------
@@ -62,8 +86,8 @@ answer_files = st.file_uploader(
 )
 
 
-def compress_and_encode_image(uploaded_file, max_size=1200):
-    """이미지 해상도 최적화, EXIF 회전 보정 및 RGB 변환"""
+def compress_and_encode_image(uploaded_file, max_size=2400):
+    """이미지 해상도를 2400px 수준으로 유지하여 미세 손글씨 및 비어있는 빈칸 선명도 확보"""
     file_bytes = uploaded_file.getvalue()
     image = Image.open(io.BytesIO(file_bytes))
 
@@ -77,7 +101,7 @@ def compress_and_encode_image(uploaded_file, max_size=1200):
 
     image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=85)
+    image.save(buffer, format="JPEG", quality=95)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
@@ -99,17 +123,14 @@ def is_english_text(text: str) -> bool:
 
 
 def evaluate_answer(student_ans: str, correct_ans: str) -> tuple[bool, str]:
-    """정오답 판정 함수
-    - 공란/미응답 오답 처리
-    - 한글 뜻이나 알파벳이 아닌 답을 작성한 경우 오답 처리
-    - 영단어 알파벳 대소문자/공백 정규화 후 정답 검증
-    """
+    """정오답 판정 함수"""
     raw_ans = student_ans.strip()
 
-    if not raw_ans or raw_ans in ["미응답", "(미응답)", "공란", "(공란)"]:
+    # 공란/미응답 감지
+    if not raw_ans or raw_ans in ["(공란)", "공란", "미응답", "(미응답)", "none", "null"]:
         return False, "미응답 (공란)"
 
-    # 답안에 알파벳이 하나도 없는 경우 (한글 뜻을 적었거나 유효한 영단어가 아닌 경우)
+    # 영단어가 아닌 한글 뜻이나 이상 기호를 적은 경우
     if not is_english_text(raw_ans):
         return False, "영단어가 아닌 답안 작성 (한글/기타)"
 
@@ -200,7 +221,6 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
             client = OpenAI(api_key=api_key)
             st.markdown("### 📊 파일별 채점 결과")
 
-            # 업로드된 각 사진 파일별로 순회하며 매칭되는 정답지를 찾아 채점
             for idx, photo in enumerate(student_photos):
                 photo_key = extract_key_number(photo.name)
 
@@ -208,7 +228,6 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                     f"#### 📄 [{idx+1}/{len(student_photos)}] 파일명: `{photo.name}` (식별번호: `{photo_key}`)"
                 )
 
-                # 파일명 번호에 맞는 정답지 파일 찾기
                 matched_answer_file = answer_file_map.get(photo_key)
 
                 if not matched_answer_file:
@@ -222,47 +241,32 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                     f"🔗 매칭된 정답지: `{matched_answer_file.name}`"
                 )
 
-                # 매칭된 정답지 파일 데이터 읽기
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
-                formatted_answers = json.dumps(
-                    answer_dict, ensure_ascii=False
-                )
+                target_q_numbers = [str(k).replace(".0", "").strip() for k in answer_dict.keys()]
 
-                base64_image = compress_and_encode_image(photo, max_size=1200)
+                # 고해상도 이미지 변환 (2400px)
+                base64_image = compress_and_encode_image(photo, max_size=2400)
 
                 prompt = f"""
-                당신은 영단어 및 영문장 시험지를 채점하는 전문 채점 선생님입니다.
+                당신은 영단어/영문장 시험지의 학생 답안을 검사하는 정밀 OCR 채점관입니다.
 
-                [시험지 구조 및 문제 규칙]
-                1. [단어형 문제]:
-                   - 문제에 한글 뜻이 1개 또는 여러 개 제시되어 있더라도, 학생이 작성해야 하는 답은 무조건 **하나의 알맞은 '영어 단어(English Word)'**입니다.
-                2. [문장/구 빈칸형 문제]:
-                   - 한글 문장이 제시되어 있고 영문장의 빈칸(___)에 알맞은 **영어 단어**를 채워 넣는 문제 (동일 시험지 내에 나온 영단어와 동일한 단어).
+                [검사 대상 문항 목록]
+                반드시 아래 문항 번호들에 대해 빠짐없이 하나씩 답안 영역을 정밀하게 점검하세요:
+                {target_q_numbers}
 
-                [채점 및 인식 규칙]
-                - 학생 답안란에 적힌 글자를 있는 그대로 인식하세요.
-                - 한글 뜻이 여러 개 있더라도 학생은 반드시 **영어 단어**를 써야 합니다. 답안란에 한글을 적었거나 유효한 영단어가 아닌 경우 작성된 텍스트 그대로 인식하세요.
-                - 학생이 영단어를 써야 하는 답안란이 **빈칸(공란)**이거나 미응답인 경우, 절대 문항을 누락하지 말고 student_answer에 "(미응답)"으로 작성하세요.
-                - 교재 정답지에 제시된 모든 문항 번호에 대해 빠짐없이 인식 결과를 작성해야 합니다.
-                - 옅은 연필 자국 및 삐뚤빼뚤한 글씨라도 정답 의도가 명확한 영단어라면 철자를 식별하여 정확히 인식하세요.
-
-                [교재 정답지]
-                {formatted_answers}
-
-                [JSON 응답 형식]
-                {{
-                  "details": [
-                    {{
-                      "number": "문항번호",
-                      "student_answer": "학생이 답안란에 작성한 내용 (공란/미응답은 \"(미응답)\")",
-                      "correct_answer": "교재 정답"
-                    }}
-                  ]
-                }}
+                [공란(미응답) 검사 핵심 수칙 - 필독]
+                1. 각 문항의 번호 옆, 밑줄(___), 또는 답안 작성 칸의 '실제 종이 여백'을 정밀하게 확인하세요.
+                2. 만약 해당 영역에 연필/펜으로 쓰인 연한 알파벳이나 필적이 전혀 없이 **완전히 깨끗한 백지 상태/공란**이라면,
+                   절대로 임의로 답을 추측하지 말고 **student_answer에 "(공란)"**이라고 정확히 기록하세요.
+                3. 문항 문제에 한글 뜻이 1개 이상 주어져 있더라도, 답안란에는 **학생이 작성한 '영어 단어'**가 있어야 합니다.
+                   - 답안란이 비어있으면 -> "(공란)"
+                   - 답안란에 글씨가 있으면 -> 보이는 영단어를 있는 그대로 추출
+                4. 이미지 판독 중 일부 문항을 생략하거나 건너뛰지 마시고, 위 문항 목록 전체를 일대일로 100% 매칭하여 반환하세요.
                 """
 
-                response = client.chat.completions.create(
-                    model="gpt-4o",
+                # Structured Outputs (pydantic) 기법을 사용하여 Schema 준수 강제
+                response = client.beta.chat.completions.parse(
+                    model=selected_model,
                     messages=[{
                         "role": "user",
                         "content": [
@@ -276,31 +280,26 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                             },
                         ],
                     }],
-                    response_format={"type": "json_object"},
+                    response_format=GradingSchema,
                 )
 
-                result = json.loads(response.choices[0].message.content)
-                details = result.get("details", [])
-
-                # GPT 반환 결과를 문항 번호별 매핑 맵으로 변환
+                parsed_data = response.choices[0].message.parsed
                 gpt_parsed_answers = {}
-                for detail in details:
-                    q_num = str(detail.get("number", "")).replace(".0", "").strip()
-                    if q_num:
-                        gpt_parsed_answers[q_num] = str(
-                            detail.get("student_answer", "")
-                        ).strip()
+                if parsed_data and parsed_data.details:
+                    for item in parsed_data.details:
+                        q_num = str(item.number).replace(".0", "").strip()
+                        gpt_parsed_answers[q_num] = str(item.student_answer).strip()
 
                 records = []
-                # 교재 정답지(answer_dict)의 모든 문항을 기준으로 전수 검증
+                # 교재 정답지 기준 100% 전수 채점 (AI 응답에서 탈락된 문항이 있더라도 교재 정답지 목록으로 자동 보정)
                 for q_num, c_ans in answer_dict.items():
                     q_num_str = str(q_num).replace(".0", "").strip()
-                    raw_s_ans = gpt_parsed_answers.get(q_num_str, "(미응답)")
+                    raw_s_ans = gpt_parsed_answers.get(q_num_str, "(공란)")
 
                     is_correct, reason = evaluate_answer(raw_s_ans, str(c_ans).strip())
 
-                    # 공란 처리 표시
-                    if not raw_s_ans or raw_s_ans in ["미응답", "(미응답)", "공란", "(공란)"]:
+                    # 공란 오답 표시
+                    if not raw_s_ans or raw_s_ans in ["(공란)", "공란", "미응답", "(미응답)", "none", "null"]:
                         display_s_ans = "(공란)"
                     else:
                         display_s_ans = raw_s_ans
@@ -313,7 +312,6 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                         "사유": reason,
                     })
 
-                # 해당 파일의 채점 통계 계산
                 total_q_count = len(records)
                 total_correct = sum(1 for r in records if r["정오답"])
                 wrong_count = total_q_count - total_correct
@@ -335,7 +333,7 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                 if wrong_details:
                     df_wrong = pd.DataFrame(wrong_details)
 
-                    # 화면 출력 (공란 또는 영단어가 아닌 오답도 오답 목록으로 명확히 표출)
+                    # 오답 테이블 출력 ((공란) 표출 확인)
                     st.dataframe(
                         df_wrong,
                         use_container_width=True,
