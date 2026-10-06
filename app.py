@@ -93,13 +93,28 @@ def normalize_text(text: str, remove_punctuation: bool = True) -> str:
     return text
 
 
-def evaluate_answer(student_ans: str, correct_ans: str) -> tuple[bool, str]:
-    """정오답 판정 함수 (공란/미응답은 오답 처리)"""
-    norm_student = normalize_text(student_ans)
-    norm_correct = normalize_text(correct_ans)
+def is_english_text(text: str) -> bool:
+    """답안에 알파벳(영어 단어)이 포함되어 있는지 확인"""
+    return bool(re.search(r"[a-zA-Z]", text))
 
-    if not norm_student or norm_student in ["미응답", "(미응답)", "공란", "(공란)"]:
+
+def evaluate_answer(student_ans: str, correct_ans: str) -> tuple[bool, str]:
+    """정오답 판정 함수
+    - 공란/미응답 오답 처리
+    - 한글 뜻이나 알파벳이 아닌 답을 작성한 경우 오답 처리
+    - 영단어 알파벳 대소문자/공백 정규화 후 정답 검증
+    """
+    raw_ans = student_ans.strip()
+
+    if not raw_ans or raw_ans in ["미응답", "(미응답)", "공란", "(공란)"]:
         return False, "미응답 (공란)"
+
+    # 답안에 알파벳이 하나도 없는 경우 (한글 뜻을 적었거나 유효한 영단어가 아닌 경우)
+    if not is_english_text(raw_ans):
+        return False, "영단어가 아닌 답안 작성 (한글/기타)"
+
+    norm_student = normalize_text(raw_ans)
+    norm_correct = normalize_text(correct_ans)
 
     if norm_student == norm_correct:
         return True, "정답"
@@ -216,18 +231,20 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                 base64_image = compress_and_encode_image(photo, max_size=1200)
 
                 prompt = f"""
-                당신은 영단어 및 문장 시험지를 채점하는 전문 채점 선생님입니다.
+                당신은 영단어 및 영문장 시험지를 채점하는 전문 채점 선생님입니다.
 
-                [시험지 구조 및 문제 유형]
-                1. [단어형]: 한글 뜻을 보고 이에 해당하는 영어 단어를 작성하는 문제
-                2. [문장/구 빈칸형]: 한글 문장을 보고 영어 문장 중간의 빈칸(___)에 알맞은 영어 단어(동일 시험지 내에 나와 있는 영단어)를 채워 넣는 문제
+                [시험지 구조 및 문제 규칙]
+                1. [단어형 문제]:
+                   - 문제에 한글 뜻이 1개 또는 여러 개 제시되어 있더라도, 학생이 작성해야 하는 답은 무조건 **하나의 알맞은 '영어 단어(English Word)'**입니다.
+                2. [문장/구 빈칸형 문제]:
+                   - 한글 문장이 제시되어 있고 영문장의 빈칸(___)에 알맞은 **영어 단어**를 채워 넣는 문제 (동일 시험지 내에 나온 영단어와 동일한 단어).
 
-                [채점 및 공란/미응답 인식 수칙 - 필독]
-                - 교재 정답지에 있는 모든 문항 번호에 대해 빠짐없이 인식 결과를 작성해야 합니다.
-                - 학생이 영단어를 써야 하는 란이 빈칸(공란)이거나, 답이 작성되어 있지 않은 경우 절대로 문항을 누락하지 말고 student_answer에 "(미응답)"으로 작성하세요.
-                - 옅은 연필 자국 및 부분 훼손 글자도 흐릿하더라도 정답 의도가 명확하다면 판독하세요.
-                - 글씨가 삐뚤빼뚤하거나 알파벳 획이 뭉개졌더라도 정답 의도가 명확하다면 인정하세요.
-                - 완전히 검게 덧칠하거나 선을 긋고 새로 적은 경우 최종 답안을 최우선으로 인식하세요.
+                [채점 및 인식 규칙]
+                - 학생 답안란에 적힌 글자를 있는 그대로 인식하세요.
+                - 한글 뜻이 여러 개 있더라도 학생은 반드시 **영어 단어**를 써야 합니다. 답안란에 한글을 적었거나 유효한 영단어가 아닌 경우 작성된 텍스트 그대로 인식하세요.
+                - 학생이 영단어를 써야 하는 답안란이 **빈칸(공란)**이거나 미응답인 경우, 절대 문항을 누락하지 말고 student_answer에 "(미응답)"으로 작성하세요.
+                - 교재 정답지에 제시된 모든 문항 번호에 대해 빠짐없이 인식 결과를 작성해야 합니다.
+                - 옅은 연필 자국 및 삐뚤빼뚤한 글씨라도 정답 의도가 명확한 영단어라면 철자를 식별하여 정확히 인식하세요.
 
                 [교재 정답지]
                 {formatted_answers}
@@ -237,7 +254,7 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                   "details": [
                     {{
                       "number": "문항번호",
-                      "student_answer": "학생이 작성한 답 (공란인 경우 \"(미응답)\")",
+                      "student_answer": "학생이 답안란에 작성한 내용 (공란/미응답은 \"(미응답)\")",
                       "correct_answer": "교재 정답"
                     }}
                   ]
@@ -275,14 +292,14 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                         ).strip()
 
                 records = []
-                # 교재 정답지(answer_dict)의 모든 문항을 기준으로 전수 검증 (공란 및 누락 완벽 감지)
+                # 교재 정답지(answer_dict)의 모든 문항을 기준으로 전수 검증
                 for q_num, c_ans in answer_dict.items():
                     q_num_str = str(q_num).replace(".0", "").strip()
                     raw_s_ans = gpt_parsed_answers.get(q_num_str, "(미응답)")
 
                     is_correct, reason = evaluate_answer(raw_s_ans, str(c_ans).strip())
 
-                    # 미응답 또는 공란으로 판정된 경우 출력용 답안을 "(공란)"으로 통일
+                    # 공란 처리 표시
                     if not raw_s_ans or raw_s_ans in ["미응답", "(미응답)", "공란", "(공란)"]:
                         display_s_ans = "(공란)"
                     else:
@@ -318,7 +335,7 @@ if st.button("🚀 채점을 조지십시요", type="primary", use_container_wid
                 if wrong_details:
                     df_wrong = pd.DataFrame(wrong_details)
 
-                    # 화면 출력 (공란인 경우 '(공란)'으로 표시되어 오답으로 명확히 구분됨)
+                    # 화면 출력 (공란 또는 영단어가 아닌 오답도 오답 목록으로 명확히 표출)
                     st.dataframe(
                         df_wrong,
                         use_container_width=True,
