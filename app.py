@@ -54,13 +54,12 @@ def normalize_q_num(q_str: str) -> str:
     return str(q_str).strip()
 
 
-# AI 자동완성 및 자체 보정 방지를 위한 Pydantic Schema
 class QuestionResult(BaseModel):
     number: str = Field(
         description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '18', '25')"
     )
     spelled_out_letters: str = Field(
-        description="학생이 손글씨로 쓴 글자를 눈에 보이는 알파벳 '하나하나'를 하이픈(-)으로 나누어 적으세요. 예: 'encourage'에서 a가 빠졌으면 'e-n-c-o-u-r-g-e'. 문장/구의 경우 단어와 단어 사이는 공백을 두고 각각의 단어 내 알파벳을 하이픈으로 나누세요 (예: 'p-e-r-m-a-n-e-n-t l-i-v-i-n-g'). 비어있거나 작성되지 않은 경우 '(미응답)'"
+        description="학생이 손글씨로 쓴 글자를 눈에 보이는 알파벳 '하나하나'를 하이픈(-)으로 나누어 적으세요. 예: 'encourage'에서 a가 빠졌으면 'e-n-c-o-u-r-g-e'. 문장/구의 경우 단어와 단어 사이는 공백을 두고 각각의 단어 내 알파벳을 하이픈으로 나누세요. 비어있거나 작성되지 않은 경우 '(미응답)'"
     )
 
 
@@ -86,7 +85,6 @@ answer_files = st.file_uploader(
 
 
 def compress_and_encode_image(uploaded_file, max_size=3840):
-    """손글씨 세밀 인식을 위해 해상도를 최대 3840px(4K)로 확대 및 화질 손실 최소화"""
     file_bytes = uploaded_file.getvalue()
     image = Image.open(io.BytesIO(file_bytes))
 
@@ -105,7 +103,6 @@ def compress_and_encode_image(uploaded_file, max_size=3840):
 
 
 def clean_spelled_letters(raw_letters: str) -> str:
-    """하이픈 및 공백을 정밀하게 정리하여 비교용 문자열로 변환 (소문자화)"""
     if not raw_letters:
         return ""
     text = unicodedata.normalize("NFC", str(raw_letters))
@@ -116,7 +113,6 @@ def clean_spelled_letters(raw_letters: str) -> str:
 
 
 def normalize_text(text: str) -> str:
-    """정답지 텍스트 소문자 변환 및 연속 공백 정리"""
     if not text:
         return ""
     text = unicodedata.normalize("NFC", str(text))
@@ -126,7 +122,6 @@ def normalize_text(text: str) -> str:
 
 
 def is_english_text(text: str) -> bool:
-    """답안에 알파벳이 포함되어 있는지 확인"""
     return bool(re.search(r"[a-zA-Z]", text))
 
 
@@ -170,4 +165,145 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
         )
     else:
         try:
-            client = OpenAI(api_key=api
+            client = OpenAI(api_key=api_key)
+            st.markdown("### 📊 채점 결과")
+
+            for idx, photo in enumerate(student_photos):
+                photo_key = extract_key_number(photo.name)
+
+                st.markdown(
+                    f"#### 📄 [{idx+1}/{len(student_photos)}] 파일명: `{photo.name}` (번호: `{photo_key}`)"
+                )
+
+                matched_answer_file = answer_file_map.get(photo_key)
+                if not matched_answer_file:
+                    st.error(
+                        f"❌ `{photo.name}`에 매칭되는 정답지(`{photo_key}`)를 찾지 못했습니다."
+                    )
+                    continue
+
+                answer_dict = load_answer_dict_from_file(matched_answer_file)
+                base64_image = compress_and_encode_image(photo, max_size=3840)
+
+                prompt = (
+                    "당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도"
+                    " 빠짐없이 엄격하게 검증하는 OCR 판독관입니다. 시험지에 각 문항의"
+                    " 맨 앞에 적힌 숫자(문항 번호)를 정확히 읽어내어 number 필드에"
+                    " 기록하고, 학생이 쓴 알파벳 하나하나를 하이픈(-)으로 나누어"
+                    " spelled_out_letters에 작성하세요. 소문자 a와 u 등을 문맥에 맞게"
+                    " 구분하고 미응답은 (미응답)으로 적어주세요."
+                )
+
+                response = client.beta.chat.completions.parse(
+                    model=selected_model,
+                    temperature=0.0,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64_image}",
+                                    "detail": "high",
+                                },
+                            },
+                        ],
+                    }],
+                    response_format=GradingSchema,
+                )
+
+                parsed_data = response.choices[0].message.parsed
+                gpt_parsed = {}
+                if parsed_data and parsed_data.details:
+                    for item in parsed_data.details:
+                        norm_num = normalize_q_num(item.number)
+                        gpt_parsed[norm_num] = str(
+                            item.spelled_out_letters
+                        ).strip()
+
+                records = []
+                for q_num_norm, c_ans in answer_dict.items():
+                    if q_num_norm in gpt_parsed:
+                        raw_spelled = gpt_parsed[q_num_norm]
+
+                        if raw_spelled in [
+                            "(미응답)",
+                            "미응답",
+                            "(공란)",
+                            "공란",
+                            "none",
+                            "null",
+                            "",
+                        ]:
+                            student_word = "(미응답)"
+                            is_correct = False
+                            reason = "미응답 (공란)"
+                        else:
+                            student_word = clean_spelled_letters(raw_spelled)
+                            correct_word = normalize_text(str(c_ans))
+
+                            if not is_english_text(student_word):
+                                is_correct = False
+                                reason = "영단어 미작성"
+                            elif student_word == correct_word:
+                                is_correct = True
+                                reason = "정답"
+                            else:
+                                is_correct = False
+                                reason = f"철자 불일치 또는 누락 (작성: '{student_word}' / 정답: '{correct_word}')"
+                    else:
+                        student_word = "(미응답)"
+                        is_correct = False
+                        reason = "시험지에서 해당 문항 번호를 찾지 못함 (미인식/미응답)"
+
+                    records.append({
+                        "문항 번호": q_num_norm,
+                        "학생 작성 답안": student_word,
+                        "교재 정답": str(c_ans).strip(),
+                        "정오답": is_correct,
+                        "사유": reason,
+                    })
+
+                total_q_count = len(records)
+                total_correct = sum(1 for r in records if r["정오답"])
+                wrong_count = total_q_count - total_correct
+
+                wrong_details = [
+                    {
+                        "문항 번호": r["문항 번호"],
+                        "학생 작성 답안": r["학생 작성 답안"],
+                        "교재 정답": r["교재 정답"],
+                        "사유": r["사유"],
+                    }
+                    for r in records
+                    if not r["정오답"]
+                ]
+
+                st.info(
+                    f"결과: **{total_correct} / {total_q_count}점** (틀린 문항: {wrong_count}개)"
+                )
+
+                if wrong_details:
+                    df_wrong = pd.DataFrame(wrong_details)
+                    st.dataframe(
+                        df_wrong, use_container_width=True, hide_index=True
+                    )
+
+                    csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
+                    safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
+                    st.download_button(
+                        label=f"📥 `{photo.name}` 오답노트 다운로드 (CSV)",
+                        data=csv_data,
+                        file_name=f"오답노트_{safe_filename}.csv",
+                        mime="text/csv",
+                        key=f"dl_{idx}",
+                    )
+                else:
+                    st.balloons()
+                    st.success("🎉 모든 문항을 맞혔습니다!")
+
+                st.markdown("---")
+
+        except Exception as e:
+            st.error(f"채점 중 오류가 발생했습니다: {e}")
