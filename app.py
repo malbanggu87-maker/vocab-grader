@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 제이슨의 구원방주")
+st.title("📝 Grit English 채점하기")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
