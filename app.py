@@ -59,7 +59,7 @@ class QuestionResult(BaseModel):
         description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '18', '25')"
     )
     spelled_out_letters: str = Field(
-        description="학생이 손글씨로 쓴 글자를 눈에 보이는 알파벳 '하나하나'를 하이픈(-)으로 나누어 적으세요. 예: 'encourage'에서 a가 빠졌으면 'e-n-c-o-u-r-g-e'. 문장/구의 경우 단어와 단어 사이는 공백을 두고 각각의 단어 내 알파벳을 하이픈으로 나누세요. 비어있거나 작성되지 않은 경우 '(미응답)'"
+        description="학생이 손글씨로 쓴 글자를 눈에 보이는 알파벳 '하나하나'를 하이픈(-)으로 나누어 적으세요. 특히 'success', 'address'처럼 같은 알파벳이 연속으로 나오는 경우(예: c가 두 개면 c-c, s가 두 개면 s-s) 절대로 생략하지 말고 눈에 보이는 개수 그대로 모두 하이픈으로 연결해 적으세요. 문장/구의 경우 단어와 단어 사이는 공백을 두고 각각의 단어 내 알파벳을 하이픈으로 나누세요. 비어있거나 작성되지 않은 경우 '(미응답)'"
     )
 
 
@@ -107,9 +107,9 @@ def clean_spelled_letters(raw_letters: str) -> str:
         return ""
     text = unicodedata.normalize("NFC", str(raw_letters))
     text = text.lower().strip()
-    words = text.split()
-    cleaned_words = [w.replace("-", "").strip() for w in words]
-    return " ".join([cw for cw in cleaned_words if cw])
+    # 하이픈(-)이나 공백을 기준으로 알파벳들을 토큰화하여 순수 문자열 구성 (연속된 알파벳 개수 온전치 보존)
+    tokens = re.findall(r"[a-z]", text)
+    return "".join(tokens)
 
 
 def normalize_text(text: str) -> str:
@@ -117,8 +117,8 @@ def normalize_text(text: str) -> str:
         return ""
     text = unicodedata.normalize("NFC", str(text))
     text = text.lower().strip()
-    text = re.sub(r"\s+", " ", text)
-    return text
+    tokens = re.findall(r"[a-z]", text)
+    return "".join(tokens)
 
 
 def is_english_text(text: str) -> bool:
@@ -186,12 +186,12 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
                 prompt = (
-                    "당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도"
-                    " 빠짐없이 엄격하게 검증하는 OCR 판독관입니다. 시험지에 각 문항의"
-                    " 맨 앞에 적힌 숫자(문항 번호)를 정확히 읽어내어 number 필드에"
-                    " 기록하고, 학생이 쓴 알파벳 하나하나를 하이픈(-)으로 나누어"
-                    " spelled_out_letters에 작성하세요. 소문자 a와 u 등을 문맥에 맞게"
-                    " 구분하고 미응답은 (미응답)으로 적어주세요."
+                    "당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도 빠짐없이 엄격하게 검증하는 OCR 판독관입니다. "
+                    "시험지에 각 문항의 맨 앞에 적힌 숫자(문항 번호)를 정확히 읽어내어 number 필드에 기록하고, "
+                    "학생이 쓴 알파벳 하나하나를 하이픈(-)으로 나누어 spelled_out_letters에 작성하세요. "
+                    "특히 'success', 'address', 'miss'처럼 같은 알파벳이 연속으로 나오는 경우(예: s가 두 개인 경우 s-s, c가 두 개인 경우 c-c) "
+                    "절대로 하나만 쓰지 말고 눈에 보이는 개수 그대로 모두 하이픈으로 연결해 적으세요. "
+                    "소문자 a와 u 등을 문맥에 맞게 정확히 구분하고 미응답은 (미응답)으로 적어주세요."
                 )
 
                 response = client.beta.chat.completions.parse(
