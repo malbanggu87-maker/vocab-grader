@@ -59,7 +59,12 @@ class QuestionResult(BaseModel):
         description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '18', '25')"
     )
     spelled_out_letters: str = Field(
-        description="학생이 손글씨로 쓴 글자를 눈에 보이는 알파벳 '하나하나'를 하이픈(-)으로 나누어 적으세요. 특히 'success', 'address'처럼 같은 알파벳이 연속으로 나오는 경우(예: c가 두 개면 c-c, s가 두 개면 s-s) 절대로 생략하지 말고 눈에 보이는 개수 그대로 모두 하이픈으로 연결해 적으세요. 문장/구의 경우 단어와 단어 사이는 공백을 두고 각각의 단어 내 알파벳을 하이픈으로 나누세요. 비어있거나 작성되지 않은 경우 '(미응답)'"
+        description=(
+            "학생이 손글씨로 쓴 글자를 눈에 보이는 알파벳 '하나하나'를 하이픈(-)으로 나누어 적으세요. "
+            "특히 'party'를 'part'로 쓰는 것처럼 단어 끝의 글자(y, e, s 등)나 중간 글자가 누락되는 경우를 철저히 감지하여 "
+            "눈에 보이는 모든 알파벳을 빠짐없이 하이픈으로 연결해 적으세요. "
+            "반복되는 알파벳('success'의 s-s, c-c 등)도 절대로 생략하지 마세요. 비어있거나 작성되지 않은 경우 '(미응답)'"
+        )
     )
 
 
@@ -103,16 +108,17 @@ def compress_and_encode_image(uploaded_file, max_size=3840):
 
 
 def clean_spelled_letters(raw_letters: str) -> str:
+    """하이픈, 공백 등을 제거하고 순수 알파벳 토큰만 추출하여 완전한 철자 문자열 반환"""
     if not raw_letters:
         return ""
     text = unicodedata.normalize("NFC", str(raw_letters))
     text = text.lower().strip()
-    # 하이픈(-)이나 공백을 기준으로 알파벳들을 토큰화하여 순수 문자열 구성 (연속된 알파벳 개수 온전치 보존)
     tokens = re.findall(r"[a-z]", text)
     return "".join(tokens)
 
 
 def normalize_text(text: str) -> str:
+    """정답지 영단어 정규화 (알파벳 소문자만 연속 추출)"""
     if not text:
         return ""
     text = unicodedata.normalize("NFC", str(text))
@@ -186,12 +192,14 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
                 prompt = (
-                    "당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도 빠짐없이 엄격하게 검증하는 OCR 판독관입니다. "
+                    "당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도 빠짐없이 엄격하게 검증하는 수석 OCR 판독관입니다. "
                     "시험지에 각 문항의 맨 앞에 적힌 숫자(문항 번호)를 정확히 읽어내어 number 필드에 기록하고, "
-                    "학생이 쓴 알파벳 하나하나를 하이픈(-)으로 나누어 spelled_out_letters에 작성하세요. "
-                    "특히 'success', 'address', 'miss'처럼 같은 알파벳이 연속으로 나오는 경우(예: s가 두 개인 경우 s-s, c가 두 개인 경우 c-c) "
-                    "절대로 하나만 쓰지 말고 눈에 보이는 개수 그대로 모두 하이픈으로 연결해 적으세요. "
-                    "소문자 a와 u 등을 문맥에 맞게 정확히 구분하고 미응답은 (미응답)으로 적어주세요."
+                    "학생이 쓴 알파벳 하나하나를 하이픈(-)으로 나누어 spelled_out_letters에 작성하세요.\n\n"
+                    "⚠️ [매우 중요 - 글자 누락 및 오탐 방지 규칙]\n"
+                    "1. 'party'를 'part'로 쓰는 것처럼 단어 끝부분의 알파벳(예: y, e, s 등)이나 중간 알파벳이 누락되는 사례를 철저히 색출하세요. "
+                    "학생이 쓰다 만 글자나 누락된 철자가 있다면 반드시 누락된 상태 그대로(예: p-a-r-t) 기록해야 합니다. 대충 비슷하다고 정답 처리하거나 임의로 글자를 채워 넣으면 절대 안 됩니다.\n"
+                    "2. 'success', 'address'처럼 연속되는 알파벳 역시 개수를 정확히 세어 모두 하이픈으로 연결하세요.\n"
+                    "3. 미응답 문항은 반드시 '(미응답)'으로 적어주세요."
                 )
 
                 response = client.beta.chat.completions.parse(
@@ -202,11 +210,11 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                         "content": [
                             {"type": "text", "text": prompt},
                             {
-                                "type": "image_url",
                                 "image_url": {
                                     "url": f"data:image/jpeg;base64,{base64_image}",
                                     "detail": "high",
                                 },
+                                "type": "image_url",
                             },
                         ],
                     }],
