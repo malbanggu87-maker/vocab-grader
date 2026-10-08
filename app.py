@@ -56,15 +56,16 @@ def normalize_q_num(q_str: str) -> str:
 
 class QuestionResult(BaseModel):
     number: str = Field(
-        description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '18', '25')"
+        description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '8', '18', '25')"
     )
     spelled_out_letters: str = Field(
         description=(
             "학생이 해당 문항 위치에 손글씨로 쓴 글자를 눈에 보이는 알파벳 '하나하나'를 하이픈(-)으로 나누어 적으세요. "
             "동일한 정답 단어가 여러 문항에 나오더라도 반드시 각 문항에 적힌 글자만 개별적으로 읽어야 합니다. "
-            "특히 'party'를 'part'로 쓰는 것처럼 단어 끝의 글자(y, e, s 등)나 중간 글자가 누락되는 경우를 철저히 감지하여 "
-            "눈에 보이는 모든 알파벳을 빠짐없이 하이픈으로 연결해 적으세요. "
-            "반복되는 알파벳('success'의 s-s, c-c 등)도 절대로 생략하지 마세요. 비어있거나 작성되지 않은 경우 '(미응답)'"
+            "특히 필기체 특성상 흘려 쓰거나 작게 쓰인 소문자 'r', 'n', 'm', 'u', 'i', 'l', 'e', 's' 및 단어 끝 글자(y, e, s 등)가 "
+            "누락되지 않도록 획의 연결 부위를 정밀하게 확인하고 작성하세요. "
+            "단, 실제로 학생이 철자를 틀렸거나 누락(예: 'party'를 'part'로 작성)한 경우에는 그 오탈자를 있는 그대로 하이픈으로 적으세요. "
+            "비어있거나 작성되지 않은 경우 '(미응답)'"
         )
     )
 
@@ -193,129 +194,9 @@ if st.button("🚀 채점 시작", type="primary", use_container_width=True):
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
                 prompt = (
-                    "당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도 빠짐없이 엄격하게 검증하는 수석 OCR 판독관입니다. "
-                    "시험지에 각 문항의 맨 앞에 적힌 숫자(문항 번호)를 정확히 읽어내어 number 필드에 기록하고, "
-                    "학생이 해당 문항에 쓴 알파벳 하나하나를 하이픈(-)으로 나누어 spelled_out_letters에 작성하세요.\n\n"
-                    "⚠️ [매우 중요 - 엄격한 문항별 독립 판독 및 오탐 방지 규칙]\n"
-                    "1. 동일한 영단어가 여러 문항의 정답인 경우라도, 각 문항별 위치에 적힌 손글씨를 개별적으로 있는 그대로 판독하세요. "
-                    "다른 문제에서 완벽히 썼다고 해서 오탈자가 있는 문제가 정답 처리되거나 영향을 받아서는 안 됩니다.\n"
-                    "2. 'party'를 'part'로 쓰는 것처럼 단어 끝부분의 알파벳(예: y, e, s 등)이나 중간 알파벳이 누락된 문항은 "
-                    "반드시 작성된 상태 그대로(예: p-a-r-t) 기록하세요. 미세한 오탈자나 글자 누락도 가차없이 그대로 반영해야 합니다.\n"
-                    "3. 'success', 'address'처럼 연속되는 알파벳 역시 개수를 정확히 세어 모두 하이픈으로 연결하세요.\n"
-                    "4. 미응답 문항은 반드시 '(미응답)'으로 적어주세요."
-                )
-
-                response = client.beta.chat.completions.parse(
-                    model=selected_model,
-                    temperature=0.0,
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}",
-                                    "detail": "high",
-                                },
-                                "type": "image_url",
-                            },
-                        ],
-                    }],
-                    response_format=GradingSchema,
-                )
-
-                parsed_data = response.choices[0].message.parsed
-                gpt_parsed = {}
-                if parsed_data and parsed_data.details:
-                    for item in parsed_data.details:
-                        norm_num = normalize_q_num(item.number)
-                        gpt_parsed[norm_num] = str(
-                            item.spelled_out_letters
-                        ).strip()
-
-                records = []
-                # 문항별 독립적 1:1 비교 로직
-                for q_num_norm, c_ans in answer_dict.items():
-                    if q_num_norm in gpt_parsed:
-                        raw_spelled = gpt_parsed[q_num_norm]
-
-                        if raw_spelled in [
-                            "(미응답)",
-                            "미응답",
-                            "(공란)",
-                            "공란",
-                            "none",
-                            "null",
-                            "",
-                        ]:
-                            student_word = "(미응답)"
-                            is_correct = False
-                            reason = "미응답 (공란)"
-                        else:
-                            student_word = clean_spelled_letters(raw_spelled)
-                            correct_word = normalize_text(str(c_ans))
-
-                            if not is_english_text(student_word):
-                                is_correct = False
-                                reason = "영단어 미작성"
-                            elif student_word == correct_word:
-                                is_correct = True
-                                reason = "정답"
-                            else:
-                                is_correct = False
-                                reason = f"철자 불일치 또는 누락 (작성: '{student_word}' / 정답: '{correct_word}')"
-                    else:
-                        student_word = "(미응답)"
-                        is_correct = False
-                        reason = "시험지에서 해당 문항 번호를 찾지 못함 (미인식/미응답)"
-
-                    records.append({
-                        "문항 번호": q_num_norm,
-                        "학생 작성 답안": student_word,
-                        "교재 정답": str(c_ans).strip(),
-                        "정오답": is_correct,
-                        "사유": reason,
-                    })
-
-                total_q_count = len(records)
-                total_correct = sum(1 for r in records if r["정오답"])
-                wrong_count = total_q_count - total_correct
-
-                wrong_details = [
-                    {
-                        "문항 번호": r["문항 번호"],
-                        "학생 작성 답안": r["학생 작성 답안"],
-                        "교재 정답": r["교재 정답"],
-                        "사유": r["사유"],
-                    }
-                    for r in records
-                    if not r["정오답"]
-                ]
-
-                st.info(
-                    f"결과: **{total_correct} / {total_q_count}점** (틀린 문항: {wrong_count}개)"
-                )
-
-                if wrong_details:
-                    df_wrong = pd.DataFrame(wrong_details)
-                    st.dataframe(
-                        df_wrong, use_container_width=True, hide_index=True
-                    )
-
-                    csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
-                    safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
-                    st.download_button(
-                        label=f"📥 `{photo.name}` 오답노트 다운로드 (CSV)",
-                        data=csv_data,
-                        file_name=f"오답노트_{safe_filename}.csv",
-                        mime="text/csv",
-                        key=f"dl_{idx}",
-                    )
-                else:
-                    st.balloons()
-                    st.success("🎉 모든 문항을 맞혔습니다!")
-
-                st.markdown("---")
-
-        except Exception as e:
-            st.error(f"채점 중 오류가 발생했습니다: {e}")
+                    "당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도 빠짐없이 엄격하게 검증하는 초정밀 OCR 판독관입니다.\n\n"
+                    "시험지의 각 문항 번호를 정확히 인식하여 number 필드에 기록하고, 학생이 작성한 알파벳 손글씨를 한 글자씩 하이픈(-)으로 연결하여 spelled_out_letters 필드에 판독하세요.\n\n"
+                    "🔍 [손글씨 필기체 인식 핵심 주의사항 - 'r' 및 미세 획 판독]:\n"
+                    "1. 학생들이 손글씨로 쓴 알파벳 중 소문자 'r'은 단순 꺾임이나 작은 물결 모양으로 짧게 표기되는 경우가 많습니다. 'surprising', 'create', 'creative', 'comfort', 'person' 등의 단어에서 'r' 획을 무심코 생략하거나 건너뛰지 말고 꼼꼼히 확인하세요.\n"
+                    "2. 'r', 'n', 'm', 'u', 'w', 'v', 'l', 'i' 등 필기체에서 획이 겹치거나 가늘게 표현된 철자도 문맥과 필적을 정밀 분석하여 정확하게 알파벳을 읽어내야 합니다.\n"
+                    "3. 동일한 영단어가 여러 문항에 사용되더라도 타 문항의 결과를 복사하지 말고 해당 위치의 손글씨만 독립적으로 읽으세요.\n"
