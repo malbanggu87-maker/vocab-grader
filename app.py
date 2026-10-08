@@ -183,10 +183,154 @@ if start_grading:
                 photo_key = extract_key_number(photo.name)
 
                 st.markdown(
-                    f"#### 📄 [{idx+1}/{len(student_photos)}] 파일명: `{photo.name}` (번호: `{photo_key}`)"
+                    "#### 📄 [{}/{}] 파일명: `{}` (번호: `{}`)".format(
+                        idx + 1, len(student_photos), photo.name, photo_key
+                    )
                 )
 
                 matched_answer_file = answer_file_map.get(photo_key)
                 if not matched_answer_file:
                     st.error(
-                        f"❌ `{photo.name}`에 매칭되는 정답지(`{photo_key}`)를 찾지 못했습니다
+                        "❌ `{}`에 매칭되는 정답지(`{}`)를 찾지 못했습니다.".format(
+                            photo.name, photo_key
+                        )
+                    )
+                    continue
+
+                answer_dict = load_answer_dict_from_file(matched_answer_file)
+                base64_image = compress_and_encode_image(photo, max_size=3840)
+
+                prompt = (
+                    "당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도 빠짐없이 엄격하게 검증하는 초정밀 OCR 판독관입니다.\n\n"
+                    "🛑 [자체 보정 및 맥락 추측 절대 금지 (오답 엄격 판독 규칙)]\n"
+                    "1. 시험지의 다른 문항에서 동일한 단어가 나왔거나 학생이 맞게 적었더라도, 현재 문항에서 학생이 철자를 다르게 적었거나 알파벳을 빼먹었다면 절대로 자체적으로 올바른 단어로 수정하여 판독하지 마십시오.\n"
+                    "2. 오직 해당 문항에 실제로 써진 손글씨 자국만 100% 기준으로 삼아야 합니다. 학생이 실제로 쓴 철자 그대로만 하이픈(-)으로 나누어 추출하세요.\n"
+                    "   - 예시: 원래 정답이 'opportunity'일 때, 학생이 1번에서는 제대로 적었으나 5번에서는 'o-p-p-o-r-t-u-n-i-t'로 'y'를 빠뜨리고 적었다면, 5번은 반드시 'o-p-p-o-r-t-u-n-i-t'로 판독하여 오답 처리되도록 해야 합니다.\n\n"
+                    "🚨 [단어 끝글자 정밀 스캔 지침]\n"
+                    "1. 단, 학생이 끝글자(y, e, g, t, s 등)의 획을 실제로 작게라도 써놓은 경우, 이것을 생략하지 말고 꼼꼼히 판독하여 하이픈으로 적어주어야 합니다.\n"
+                    "2. 손글씨 획이 아예 존재하지 않을 때만 해당 알파벳을 누락된 상태로 적으세요.\n"
+                    "3. 미응답 문항은 반드시 '(미응답)'으로 적어주세요."
+                )
+
+                response = client.beta.chat.completions.parse(
+                    model=selected_model,
+                    temperature=0.0,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "image_url": {
+                                    "url": "data:image/jpeg;base64,{}".format(
+                                        base64_image
+                                    ),
+                                    "detail": "high",
+                                },
+                                "type": "image_url",
+                            },
+                        ],
+                    }],
+                    response_format=GradingSchema,
+                )
+
+                parsed_data = response.choices[0].message.parsed
+                gpt_parsed = {}
+                if parsed_data and parsed_data.details:
+                    for item in parsed_data.details:
+                        norm_num = normalize_q_num(item.number)
+                        gpt_parsed[norm_num] = str(
+                            item.spelled_out_letters
+                        ).strip()
+
+                records = []
+                for q_num_norm, c_ans in answer_dict.items():
+                    if q_num_norm in gpt_parsed:
+                        raw_spelled = gpt_parsed[q_num_norm]
+
+                        if raw_spelled in [
+                            "(미응답)",
+                            "미응답",
+                            "(공란)",
+                            "공란",
+                            "none",
+                            "null",
+                            "",
+                        ]:
+                            student_word = "(미응답)"
+                            is_correct = False
+                            reason = "미응답 (공란)"
+                        else:
+                            student_word = clean_spelled_letters(raw_spelled)
+                            correct_word = normalize_text(str(c_ans))
+
+                            if not is_english_text(student_word):
+                                is_correct = False
+                                reason = "영단어 미작성"
+                            elif student_word == correct_word:
+                                is_correct = True
+                                reason = "정답"
+                            else:
+                                is_correct = False
+                                reason = (
+                                    "철자 불일치/누락 (작성: '{}' / 정답: '{}')"
+                                    "".format(student_word, correct_word)
+                                )
+                    else:
+                        student_word = "(미응답)"
+                        is_correct = False
+                        reason = "시험지에서 해당 문항 번호를 찾지 못함 (미인식/미응답)"
+
+                    records.append({
+                        "문항 번호": q_num_norm,
+                        "학생 작성 답안": student_word,
+                        "교재 정답": str(c_ans).strip(),
+                        "정오답": is_correct,
+                        "사유": reason,
+                    })
+
+                total_q_count = len(records)
+                total_correct = sum(1 for r in records if r["정오답"])
+                wrong_count = total_q_count - total_correct
+
+                wrong_details = [
+                    {
+                        "문항 번호": r["문항 번호"],
+                        "학생 작성 답안": r["학생 작성 답안"],
+                        "교재 정답": r["교재 정답"],
+                        "사유": r["사유"],
+                    }
+                    for r in records
+                    if not r["정오답"]
+                ]
+
+                st.info(
+                    "결과: **{} / {}점** (틀린 문항: {}개)".format(
+                        total_correct, total_q_count, wrong_count
+                    )
+                )
+
+                if wrong_details:
+                    df_wrong = pd.DataFrame(wrong_details)
+                    st.dataframe(
+                        df_wrong, use_container_width=True, hide_index=True
+                    )
+
+                    csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
+                    safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
+                    st.download_button(
+                        label="📥 `{}` 오답노트 다운로드 (CSV)".format(
+                            photo.name
+                        ),
+                        data=csv_data,
+                        file_name="오답노트_{}.csv".format(safe_filename),
+                        mime="text/csv",
+                        key="dl_{}".format(idx),
+                    )
+                else:
+                    st.balloons()
+                    st.success("🎉 모든 문항을 맞혔습니다!")
+
+                st.markdown("---")
+
+        except Exception as e:
+            st.error("채점 중 오류가 발생했습니다: {}".format(e))
