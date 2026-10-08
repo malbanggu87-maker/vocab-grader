@@ -176,4 +176,24 @@ if start_grading:
         )
     else:
         try:
-            client = OpenAI(api_key=api_key
+            client = OpenAI(api_key=api_key)
+            st.markdown("### 📊 채점 결과")
+
+            for idx, photo in enumerate(student_photos):
+                photo_key = extract_key_number(photo.name)
+
+                st.markdown(
+                    f"#### 📄 [{idx+1}/{len(student_photos)}] 파일명: `{photo.name}` (번호: `{photo_key}`)"
+                )
+
+                matched_answer_file = answer_file_map.get(photo_key)
+                if not matched_answer_file:
+                    st.error(
+                        f"❌ `{photo.name}`에 매칭되는 정답지(`{photo_key}`)를 찾지 못했습니다."
+                    )
+                    continue
+
+                answer_dict = load_answer_dict_from_file(matched_answer_file)
+                base64_image = compress_and_encode_image(photo, max_size=3840)
+
+                prompt = """당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도 빠짐없이 엄격하게 검증하는 초정밀 OCR 판독관입니다
