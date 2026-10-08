@@ -114,4 +114,88 @@ def clean_spelled_letters(raw_letters: str) -> str:
     if not raw_letters:
         return ""
     text = unicodedata.normalize("NFC", str(raw_letters))
-    text = text.lower
+    text = text.lower().strip()
+    tokens = re.findall(r"[a-z]", text)
+    return "".join(tokens)
+
+
+def normalize_text(text: str) -> str:
+    """정답지 영단어 정규화 (알파벳 소문자만 연속 추출)"""
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFC", str(text))
+    text = text.lower().strip()
+    tokens = re.findall(r"[a-z]", text)
+    return "".join(tokens)
+
+
+def is_english_text(text: str) -> bool:
+    return bool(re.search(r"[a-zA-Z]", text))
+
+
+def load_answer_dict_from_file(ans_file) -> dict:
+    answer_bytes = ans_file.getvalue()
+    f_name = ans_file.name.lower()
+
+    if f_name.endswith(".csv"):
+        df_sub = pd.read_csv(io.BytesIO(answer_bytes), header=None).dropna(
+            how="all"
+        )
+    else:
+        df_sub = pd.read_excel(
+            io.BytesIO(answer_bytes), header=None, engine="openpyxl"
+        ).dropna(how="all")
+
+    raw_q_nums = df_sub.iloc[:, 0].astype(str)
+    raw_q_ans = df_sub.iloc[:, 1].astype(str).str.strip()
+
+    ans_dict = {}
+    for q_n, q_a in zip(raw_q_nums, raw_q_ans):
+        norm_key = normalize_q_num(q_n)
+        if norm_key:
+            ans_dict[norm_key] = q_a
+
+    return ans_dict
+
+
+answer_file_map = {}
+if answer_files:
+    for ans_f in answer_files:
+        a_key = extract_key_number(ans_f.name)
+        if a_key:
+            answer_file_map[a_key] = ans_f
+
+st.markdown("---")
+
+# 🎈 [채점 시작 버튼 영역] 
+start_grading = st.button("🚀 채점 시작", type="primary", use_container_width=True)
+
+if start_grading:
+    if not api_key or not answer_files or not student_photos:
+        st.error(
+            "API 키, 학생 시험지 사진, 교재 정답지 엑셀 파일을 모두 업로드해 주세요."
+        )
+    else:
+        try:
+            client = OpenAI(api_key=api_key)
+            st.markdown("### 📊 채점 결과")
+
+            for idx, photo in enumerate(student_photos):
+                photo_key = extract_key_number(photo.name)
+
+                st.markdown(
+                    f"#### 📄 [{idx+1}/{len(student_photos)}] 파일명: `{photo.name}` (번호: `{photo_key}`)"
+                )
+
+                matched_answer_file = answer_file_map.get(photo_key)
+                if not matched_answer_file:
+                    st.error(
+                        f"❌ `{photo.name}`에 매칭되는 정답지(`{photo_key}`)를 찾지 못했습니다."
+                    )
+                    continue
+
+                answer_dict = load_answer_dict_from_file(matched_answer_file)
+                base64_image = compress_and_encode_image(photo, max_size=3840)
+
+                prompt = (
+                    "당신은 영단어 및 문장 시험지의 학생 손글씨를 한 글자도 빠짐없이 엄격하게 검증하는 초정밀 OCR 판독관입니다.\n\n"
