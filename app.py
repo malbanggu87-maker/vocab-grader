@@ -176,40 +176,4 @@ start_grading = st.button("🚀 채점 시작", type="primary", use_container_wi
 
 if start_grading:
     if not api_key or not answer_files or not student_photos:
-        st.error("API 키, 학생 시험지 사진, 교재 정답지 엑셀 파일을 모두 업로드해 주세요.")
-    else:
-        try:
-            client = OpenAI(api_key=api_key)
-        except Exception as e:
-            st.error("OpenAI 클라이언트 초기화 오류: {}".format(e))
-            client = None
-
-        if client:
-            st.markdown("### 📊 채점 결과")
-
-            for idx, photo in enumerate(student_photos):
-                photo_key = extract_key_number(photo.name)
-
-                st.markdown("#### 📄 [{}/{}] 파일명: `{}` (번호: `{}`)".format(
-                    idx + 1, len(student_photos), photo.name, photo_key
-                ))
-
-                matched_answer_file = answer_file_map.get(photo_key)
-                if not matched_answer_file:
-                    st.error("❌ `{}`에 매칭되는 정답지(`{}`)를 찾지 못했습니다.".format(
-                        photo.name, photo_key
-                    ))
-                    continue
-
-                answer_dict = load_answer_dict_from_file(matched_answer_file)
-                base64_image = compress_and_encode_image(photo, max_size=3840)
-
-                answer_context_str = "\n".join(
-                    ["- {}번 정답 기준: {}".format(k, v) for k, v in answer_dict.items()]
-                )
-
-                prompt = (
-                    "당신은 영단어 및 문장 시험지의 학생 손글씨를 철저히 검증하는 초정밀 OCR 판독관입니다.\n\n"
-                    "📋 [참고용 해당 시험지 문항별 정답 리스트]:\n{}\n\n"
-                    "🚨 [초엄격 손글씨 추출 및 오답 판독 절대 규칙]\n"
-                    "
+        st.error("API 키, 학생 시험지 사진,
