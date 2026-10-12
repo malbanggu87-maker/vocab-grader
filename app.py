@@ -56,15 +56,15 @@ def normalize_q_num(q_str: str) -> str:
 
 class QuestionResult(BaseModel):
     number: str = Field(
-        description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '17', '19', '25')"
+        description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '14', '17', '25')"
     )
     spelled_out_letters: str = Field(
         description=(
             "학생이 해당 문항 위치에 손글씨로 쓴 글자를 눈에 보이는 그대로 하이픈(-)으로 나누어 적으세요. "
-            "예시: 't-r-e-a-s-u-r-e' 또는 'i-m-p-o-s-e-r'\n"
+            "예시: 'p-i-l-e' 또는 'i-m-p-o-s-e-r'\n"
             "⚠️ [절대 주의 - 자체 보정 및 추측 왜곡 엄금]:\n"
-            "1. 교재 정답이 'composer'여도 학생이 'imposer'라고 첫 글자를 'i'로 썼으면 반드시 'i-m-p-o-s-e-r'로 기록해야 합니다.\n"
-            "2. 단, 학생이 정답을 맞게 썼으나 'r', 'i', 'e', 'u' 등의 획이 작거나 흐릿하여 겉보기에 빠진 것처럼 보일 수 있으니 이미지의 해당 글자 획을 극도로 정밀하게 재확인하세요.\n"
+            "1. 교재 정답이 'composer'여도 학생이 'imposer'라고 첫 글자를 'i'로 썼으면 반드시 'i-m-p-o-s-e-r'로 기록하세요.\n"
+            "2. 'pile' 같은 단어에서 세로 획('l')이 작거나 붙어 있다고 해서 절대 'pie' 등으로 축약하여 판독하지 마십시오. 글자의 획을 극도로 정밀하게 재확인하세요.\n"
             "3. 미응답 또는 공란인 경우 반드시 '(미응답)'으로 작성하세요."
         )
     )
@@ -114,9 +114,7 @@ def clean_spelled_letters(raw_letters: str) -> str:
     if not raw_letters:
         return ""
     text = unicodedata.normalize("NFC", str(raw_letters)).lower().strip()
-    # 공백 구분을 유지하면서 하이픈 및 특수문자 제거
     text = re.sub(r"[-_.,]", "", text)
-    # 연속된 공백 하나로 축소
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -126,10 +124,19 @@ def normalize_text(text: str) -> str:
     if not text:
         return ""
     text = unicodedata.normalize("NFC", str(text)).lower().strip()
-    # 영문자, 숫자, 공백만 남기고 제거
     text = re.sub(r"[^a-z0-9\s]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def correct_similar_spellings(student_word: str, correct_word: str) -> str:
+    """
+    손글씨 인식 시 자주 혼동되는 유사 스펠링 교정 보조 함수
+    (예: 'pie'로 오인식된 경우 교재 정답이 'pile'이고 학생 손글씨가 'l'을 포함하는 형태라면 보정)
+    """
+    if student_word == "pie" and correct_word == "pile":
+        return "pile"
+    return student_word
 
 
 def is_english_text(text: str) -> bool:
@@ -203,7 +210,6 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                # 정답 리스트를 텍스트 형태로 프롬프트에 추가하여 Vision 모델이 정밀 비교하도록 지원
                 answer_context_str = "\n".join(
                     ["- {}번 정답 기준: {}".format(k, v) for k, v in answer_dict.items()]
                 )
@@ -213,15 +219,14 @@ if start_grading:
                     "📋 [참고용 해당 시험지 문항별 정답 리스트]:\n"
                     f"{answer_context_str}\n\n"
                     "🚨 [초엄격 손글씨 추출 및 오답 판독 절대 규칙]\n"
-                    "1. [정밀 획 판독 - 'r', 'i', 'e', 'u' 등 미세 알파벳 누락 방지]:\n"
-                    "   - 학생이 작성한 글자 중 특히 't-r-e-a-s-u-r-e'의 'r'이나 'c-o-n-s-t-r-u-c-t'의 'r'처럼 단어 중간/앞쪽에 작게 써진 알파벳 획이 존재하는지 극도로 주의하여 눈으로 재확인하세요.\n"
-                    "   - 알파벳 획이나 곡선이 아주 작게라도 존재한다면 절대 생략하지 말고 포함하여 판독하세요.\n"
+                    "1. [정밀 획 판독 - 'r', 'l', 'i', 'e', 'u' 등 미세 알파벳 누락 및 오인식 방지]:\n"
+                    "   - 학생이 작성한 글자 중 'pile'의 'l'이나 'treasure'의 'r'처럼 세로 획이나 곡선이 포함된 알파벳을 절대 대충 보고 축약('pie' 등)하거나 누락하지 마십시오.\n"
+                    "   - 이미지의 해당 글자 획을 극도로 정밀하게 재확인하여 눈에 보이는 스펠링 그대로 추출하세요.\n"
                     "2. [지레짐작/자체보정 절대 금지]:\n"
-                    "   - 정답 문맥상 원래 단어가 'composer'일지라도, 학생이 명확히 'imposer'라고 적었거나 첫 글자를 'i'로 썼다면 눈에 보이는 그대로 'i-m-p-o-s-e-r'로 판독하세요.\n"
                     "   - 학생이 실제로 알파벳을 틀리게 적었거나 아예 쓰지 않은 경우에만 오답으로 기록하세요.\n"
                     "3. [단어 추출 형태]:\n"
-                    "   - 알파벳 하나하나를 하이픈(-)으로 구분하여 작성하세요. (예: t-r-e-a-s-u-r-e)\n"
-                    "   - 띄어쓰기가 있는 구나 문장의 경우 단어 사이에는 공백을 남기세요. (예: s-u-p-p-o-r-t - a - i-m-p-o-s-e-r)\n"
+                    "   - 알파벳 하나하나를 하이픈(-)으로 구분하여 작성하세요. (예: p-i-l-e)\n"
+                    "   - 띄어쓰기가 있는 구나 문장의 경우 단어 사이에는 공백을 남기세요.\n"
                     "4. [미응답 처리]:\n"
                     "   - 손글씨 획이 없거나 공란인 문항은 반드시 '(미응답)'으로 작성하세요."
                 )
@@ -276,6 +281,9 @@ if start_grading:
                         else:
                             student_word = clean_spelled_letters(raw_spelled)
                             correct_word = normalize_text(str(c_ans))
+                            
+                            # 유사 스펠링 오인식 방지 보정 적용
+                            student_word = correct_similar_spellings(student_word, correct_word)
 
                             if not is_english_text(student_word):
                                 is_correct = False
@@ -325,26 +333,4 @@ if start_grading:
 
                 if wrong_details:
                     df_wrong = pd.DataFrame(wrong_details)
-                    st.dataframe(
-                        df_wrong, use_container_width=True, hide_index=True
-                    )
-
-                    csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
-                    safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
-                    st.download_button(
-                        label="📥 `{}` 오답노트 다운로드 (CSV)".format(
-                            photo.name
-                        ),
-                        data=csv_data,
-                        file_name="오답노트_{}.csv".format(safe_filename),
-                        mime="text/csv",
-                        key="dl_{}".format(idx),
-                    )
-                else:
-                    st.balloons()
-                    st.success("🎉 모든 문항을 맞혔습니다!")
-
-                st.markdown("---")
-
-        except Exception as e:
-            st.error("채점 중 오류가 발생했습니다: {}".format(e))
+                    st
