@@ -145,4 +145,36 @@ def is_english_text(text: str) -> bool:
 
 def load_answer_dict_from_file(ans_file) -> dict:
     answer_bytes = ans_file.getvalue()
-    f_name = ans_file.
+    f_name = ans_file.name.lower()
+
+    if f_name.endswith(".csv"):
+        df_sub = pd.read_csv(io.BytesIO(answer_bytes), header=None).dropna(
+            how="all"
+        )
+    else:
+        df_sub = pd.read_excel(
+            io.BytesIO(answer_bytes), header=None, engine="openpyxl"
+        ).dropna(how="all")
+
+    raw_q_nums = df_sub.iloc[:, 0].astype(str)
+    raw_q_ans = df_sub.iloc[:, 1].astype(str).str.strip()
+
+    ans_dict = {}
+    for q_n, q_a in zip(raw_q_nums, raw_q_ans):
+        norm_key = normalize_q_num(q_n)
+        if norm_key:
+            ans_dict[norm_key] = q_a
+
+    return ans_dict
+
+
+answer_file_map = {}
+if answer_files:
+    for ans_f in answer_files:
+        a_key = extract_key_number(ans_f.name)
+        if a_key:
+            answer_file_map[a_key] = ans_f
+
+st.markdown("---")
+
+start_grading = st.
