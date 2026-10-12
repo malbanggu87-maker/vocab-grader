@@ -167,3 +167,4 @@ answer_file_map = {}
 if answer_files:
     for ans_f in answer_files:
         a_key = extract_key_number(ans_f.name)
+        if a_key
