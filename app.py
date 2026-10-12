@@ -130,10 +130,7 @@ def normalize_text(text: str) -> str:
 
 
 def correct_similar_spellings(student_word: str, correct_word: str) -> str:
-    """
-    손글씨 인식 시 자주 혼동되는 유사 스펠링 교정 보조 함수
-    (예: 'pie'로 오인식된 경우 교재 정답이 'pile'이고 학생 손글씨가 'l'을 포함하는 형태라면 보정)
-    """
+    """손글씨 인식 시 자주 혼동되는 유사 스펠링 교정 보조 함수"""
     if student_word == "pie" and correct_word == "pile":
         return "pile"
     return student_word
@@ -148,13 +145,9 @@ def load_answer_dict_from_file(ans_file) -> dict:
     f_name = ans_file.name.lower()
 
     if f_name.endswith(".csv"):
-        df_sub = pd.read_csv(io.BytesIO(answer_bytes), header=None).dropna(
-            how="all"
-        )
+        df_sub = pd.read_csv(io.BytesIO(answer_bytes), header=None).dropna(how="all")
     else:
-        df_sub = pd.read_excel(
-            io.BytesIO(answer_bytes), header=None, engine="openpyxl"
-        ).dropna(how="all")
+        df_sub = pd.read_excel(io.BytesIO(answer_bytes), header=None, engine="openpyxl").dropna(how="all")
 
     raw_q_nums = df_sub.iloc[:, 0].astype(str)
     raw_q_ans = df_sub.iloc[:, 1].astype(str).str.strip()
@@ -181,15 +174,16 @@ start_grading = st.button("🚀 채점 시작", type="primary", use_container_wi
 
 if start_grading:
     if not api_key or not answer_files or not student_photos:
-        st.error(
-            "API 키, 학생 시험지 사진, 교재 정답지 엑셀 파일을 모두 업로드해 주세요."
-        )
+        st.error("API 키, 학생 시험지 사진, 교재 정답지 엑셀 파일을 모두 업로드해 주세요.")
     else:
         try:
             client = OpenAI(api_key=api_key)
+        except Exception as e:
+            st.error(f"OpenAI 클라이언트 초기화 오류: {e}")
+            client = None
+
+        if client:
             st.markdown("### 📊 채점 결과")
 
             for idx, photo in enumerate(student_photos):
                 photo_key = extract_key_number(photo.name)
-
-                st.markdown
