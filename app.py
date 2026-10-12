@@ -63,8 +63,8 @@ class QuestionResult(BaseModel):
             "학생이 해당 문항 위치에 손글씨로 쓴 글자를 눈에 보이는 그대로 하이픈(-)으로 나누어 적으세요. "
             "예시: 'p-u-b-l-i-c' 또는 'p-i-l-e'\n"
             "⚠️ [절대 주의 - 오탈자 자동 보정 엄금 및 공란 처리]:\n"
-            "1. 학생이 'abandom', 'abandmon' 등과 같이 철자를 조금이라도 틀리게 적었다면, 교재 정답('abandon')과 유사하다는 이유로 절대 임의로 고쳐서 인식하지 마십시오.\n"
-            "2. 눈에 보이는 철자 그대로('a-b-a-n-d-o-m') 추출해야 하며, 철자가 틀렸으므로 오답 처리되도록 정확한 스펠링을 기록하세요.\n"
+            "1. 학생이 'polloute', 'abandom', 'issontial' 등과 같이 철자를 조금이라도 틀리게 적었다면, 교재 정답('pollute', 'abandon', 'essential')과 비슷하다는 이유로 절대 임의로 고쳐서 인식하지 마십시오.\n"
+            "2. 눈에 보이는 철자 그대로('p-o-l-l-o-u-t-e') 추출해야 하며, 철자가 틀렸으므로 반드시 오답 처리되도록 정확한 스펠링을 기록하세요.\n"
             "3. 답란이 비어있는 경우 반드시 '(미응답)'으로 작성하세요."
         )
     )
@@ -131,7 +131,7 @@ def normalize_text(text: str) -> str:
 
 def correct_similar_spellings(student_word: str, correct_word: str) -> str:
     """손글씨 인식 시 명백하게 판독된 알파벳 오인식에 대해서만 제한적으로 보정 (오답 자체를 정답으로 만들지 않음)"""
-    # abandom 등의 오탈자는 절대 보정하지 않고 그대로 유지하여 오답 처리되도록 함
+    # polloute, abandom 등의 오탈자는 절대 보정하지 않고 그대로 유지하여 오답 처리되도록 함
     return student_word
 
 
@@ -205,7 +205,7 @@ if start_grading:
                     ["- {}번 정답 기준: {}".format(k, v) for k, v in answer_dict.items()]
                 )
 
-                prompt = "당신은 영단어 및 문장 시험지의 학생 손글씨를 철저히 검증하는 초정밀 OCR 판독관입니다.\n\n📋 [참고용 해당 시험지 문항별 정답 리스트]:\n{}\n\n🚨 [오탈자 자동 보정 금지 및 공란 철저 검증 규칙]\n1. [오탈자 임의 보정 절대 금지 (가장 중요)]: \n    - 학생이 'abandom', 'issontial' 등 철자를 틀리게 적었을 때, 교재 정답('abandon', 'essential')과 비슷하다는 이유로 임의로 교정하여 정답으로 처리하는 행위를 절대 금지합니다.\n    - 학생이 적은 철자 그대로(예: 'a-b-a-n-d-o-m') 정직하게 추출해야 오답으로 정확히 판정됩니다.\n2. [공란(미응답) 절대 누락 금지]:\n    - 답란이 비어있는 경우 반드시 '(미응답)'으로 출력하세요.".format(answer_context_str)
+                prompt = "당신은 영단어 및 문장 시험지의 학생 손글씨를 철저히 검증하는 초정밀 OCR 판독관입니다.\n\n📋 [참고용 해당 시험지 문항별 정답 리스트]:\n{}\n\n🚨 [오탈자 자동 보정 금지 및 공란 철저 검증 규칙]\n1. [오탈자 임의 보정 절대 금지 (가장 중요)]: \n    - 학생이 'polloute', 'abandom', 'issontial' 등 철자를 틀리게 적었을 때, 교재 정답('pollute', 'abandon', 'essential')과 비슷하다는 이유로 임의로 교정하여 정답으로 처리하는 행위를 절대 금지합니다.\n    - 학생이 적은 철자 그대로(예: 'p-o-l-l-o-u-t-e') 정직하게 추출해야 오답으로 정확히 판정됩니다.\n2. [공란(미응답) 절대 누락 금지]:\n    - 답란이 비어있는 경우 반드시 '(미응답)'으로 출력하세요.".format(answer_context_str)
 
                 try:
                     chat_messages = [
@@ -278,42 +278,4 @@ if start_grading:
                         })
 
                     total_q_count = len(records)
-                    total_correct = sum(1 for r in records if r["정오답"])
-                    wrong_count = total_q_count - total_correct
-
-                    wrong_details = [
-                        {
-                            "문항 번호": r["문항 번호"],
-                            "학생 작성 답안": r["학생 작성 답안"],
-                            "교재 정답": r["교재 정답"],
-                            "사유": r["사유"],
-                        }
-                        for r in records
-                        if not r["정오답"]
-                    ]
-
-                    st.info("결과: **{} / {}점** (틀린 문항: {}개)".format(
-                        total_correct, total_q_count, wrong_count
-                    ))
-
-                    if wrong_details:
-                        df_wrong = pd.DataFrame(wrong_details)
-                        st.dataframe(df_wrong, use_container_width=True, hide_index=True)
-
-                        csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
-                        safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
-                        st.download_button(
-                            label="📥 `{}` 오답노트 다운로드 (CSV)".format(photo.name),
-                            data=csv_data,
-                            file_name="오답노트_{}.csv".format(safe_filename),
-                            mime="text/csv",
-                            key="dl_{}".format(idx),
-                        )
-                    else:
-                        st.balloons()
-                        st.success("🎉 모든 문항을 맞혔습니다!")
-
-                except Exception as api_err:
-                    st.error("API 호출 또는 채점 처리 중 오류 발생: {}".format(api_err))
-
-                st.markdown("---")
+                    total_correct = sum(1 for r in records
