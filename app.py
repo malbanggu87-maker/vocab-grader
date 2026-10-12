@@ -177,4 +177,19 @@ if answer_files:
 
 st.markdown("---")
 
-start_grading = st.
+start_grading = st.button("🚀 채점 시작", type="primary", use_container_width=True)
+
+if start_grading:
+    if not api_key or not answer_files or not student_photos:
+        st.error(
+            "API 키, 학생 시험지 사진, 교재 정답지 엑셀 파일을 모두 업로드해 주세요."
+        )
+    else:
+        try:
+            client = OpenAI(api_key=api_key)
+            st.markdown("### 📊 채점 결과")
+
+            for idx, photo in enumerate(student_photos):
+                photo_key = extract_key_number(photo.name)
+
+                st.markdown
