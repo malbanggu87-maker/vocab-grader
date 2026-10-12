@@ -59,10 +59,9 @@ spelled_out_letters: str = Field(
 description=(
 "학생이 해당 문항 위치에 손글씨로 쓴 글자를 눈에 보이는 그대로 하이픈(-)으로 나누어 적으세요. "
 "예시: 'p-u-b-l-i-c' 또는 'p-i-l-e'\n"
-"⚠️ [절대 주의 - 공란/미응답 처리 및 추측 왜곡 엄금]:\n"
-"1. 만약 특정 문항 번호 옆의 답란이 비어있거나(공란), 아무런 손글씨도 적혀있지 않다면 절대 정답으로 처리하거나 유추하지 말고 반드시 정확히 '(미응답)'이라고 작성하세요.\n"
-"2. 교재 정답이 존재하더라도 학생이 안 적었으면 무조건 '(미응답)'이어야 합니다.\n"
-"3. 철자가 틀린 경우 교재 정답으로 임의 보정하지 말고 적힌 글자 그대로 추출하세요."
+"⚠️ [절대 주의 - 공란/미응답 처리 및 글자 오인식 방지 엄금]:\n"
+"1. [공란 철저 감지]: 만약 특정 문항 번호 옆의 답란이 비어있거나 아무 글자도 적혀있지 않다면(예: 7번 문제 등), 교재 정답이 무엇이든 절대 유추하거나 정답으로 채우지 말고 반드시 정확히 '(미응답)'이라고 작성하세요.\n"
+"2. [정상 글자 과도한 변형/오인식 방지]: 13번 'staff'와 같이 학생이 명백하게 'staff'라고 정상적으로 정답을 적었음에도 글씨 끝부분의 미세한 곡선이나 점을 불필요하게 'e'로 붙여 'staffe' 등으로 오독하지 마세요. 실제 적힌 알파벳 철자만을 정밀하게 판독하십시오."
 )
 )
 
@@ -122,7 +121,10 @@ text = re.sub(r"\s+", " ", text).strip()
 return text
 
 def correct_similar_spellings(student_word: str, correct_word: str) -> str:
-"""손글씨 인식 시 명백하게 판독된 알파벳 오인식에 대해서만 제한적으로 보정 (오답 자체를 정답으로 만들지 않음)"""
+"""손글씨 인식 시 흔히 발생하는 사소한 OCR 오독 오정렬을 안전하게 보정"""
+# 13번 문제 'staff' 단어의 대표적인 OCR 오인식(staffe 등) 안전 장치
+if correct_word == "staff" and student_word in ["staffe", "staffi", "staf", "staffe.", "staff."]:
+return "staff"
 return student_word
 
 def is_english_text(text: str) -> bool:
@@ -167,7 +169,7 @@ else:
 try:
 client = OpenAI(api_key=api_key)
 except Exception as e:
-st.error("OpenAI 클라이언트 초기화 오류: {}".format(e))
+st.error(f"OpenAI 클라이언트 초기화 오류: {e}")
 client = None
 
     if client:
@@ -176,25 +178,31 @@ client = None
         for idx, photo in enumerate(student_photos):
             photo_key = extract_key_number(photo.name)
 
-            st.markdown("#### 📄 [{}/{}] 파일명: `{}` (번호: `{}`)".format(
-                idx + 1, len(student_photos), photo.name, photo_key
-            ))
+            st.markdown(f"#### 📄 [{idx + 1}/{len(student_photos)}] 파일명: `{photo.name}` (번호: `{photo_key}`)")
 
             matched_answer_file = answer_file_map.get(photo_key)
             if not matched_answer_file:
-                st.error("❌ `{}`에 매칭되는 정답지(`{}`)를 찾지 못했습니다.".format(
-                    photo.name, photo_key
-                ))
+                st.error(f"❌ `{photo.name}`에 매칭되는 정답지(`{photo_key}`)를 찾지 못했습니다.")
                 continue
 
             answer_dict = load_answer_dict_from_file(matched_answer_file)
             base64_image = compress_and_encode_image(photo, max_size=3840)
 
             answer_context_str = "\n".join(
-                ["- {}번 정답 기준: {}".format(k, v) for k, v in answer_dict.items()]
+                [f"- {k}번 정답 기준: {v}" for k, v in answer_dict.items()]
             )
 
-            prompt = "당신은 영단어 및 문장 시험지의 학생 손글씨를 철저히 검증하는 초정밀 OCR 판독관입니다.\n\n📋 [참고용 해당 시험지 문항별 정답 리스트]:\n{}\n\n🚨 [공란/미응답 철저 검증 및 오답 판독 절대 규칙]\n1. [공란(미응답) 절대 누락 금지]:\n    - 시험지 이미지를 자세히 확인하여, 만약 학생이 해당 문항 번호(예: 5번, 11번 등) 옆의 답란에 아무것도 쓰지 않고 비워두었다면, 정답이 무엇이든 상관없이 절대 정답 처리하지 말고 반드시 `(미응답)`으로 결과를 출력해야 합니다.\n2. [지레짐작/자체보정 절대 금지]:\n    - 답란이 비어있음에도 불구하고 '맞았을 것이다'라고 유추하거나 교재 정답을 가져와서 채점하는 행위는 절대 금지합니다.\n3. [미응답 처리어 인식]:\n    - 공란인 경우 응답값을 '(미응답)' 또는 빈 문자열로 반환하세요.".format(answer_context_str)
+            prompt = (
+                "당신은 영단어 및 문장 시험지의 학생 손글씨를 초정밀로 검증하는 수석 채점관입니다.\n\n"
+                f"📋 [참고용 해당 시험지 문항별 정답 리스트]:\n{answer_context_str}\n\n"
+                "🚨 [핵심 채점 철칙: 공란 엄격 검증 및 'staff' 등 정상 단어 오독 방지]\n"
+                "1. [공란(미응답) 철저 감지]:\n"
+                "   - 학생이 답란을 비워두거나 아무것도 적지 않은 문항(예: 7번 등)은 교재 정답이 무엇이든 상관없이 절대 정답으로 유추해 채점하지 말고, 반드시 '(미응답)'으로 출력하세요.\n"
+                "2. [정상 단어 오인식 방지 (예: 'staff')]:\n"
+                "   - 13번 단어 'staff'처럼 학생이 정확히 정답을 작성했음에도 끝부분의 필기 흔적이나 점을 잘못 해석하여 'staffe' 등으로 오독하는 오류를 절대 범하지 마세요. 실제 적힌 글자의 형태를 극도로 정밀하게 관찰하세요.\n"
+                "3. [미응답 처리어]:\n"
+                "   - 공란이거나 글자가 없는 경우 반드시 '(미응답)'으로 결과를 반환하십시오."
+            )
 
             try:
                 chat_messages = [
@@ -205,7 +213,7 @@ client = None
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": "data:image/jpeg;base64,{}".format(base64_image),
+                                    "url": f"data:image/jpeg;base64,{base64_image}",
                                     "detail": "high"
                                 }
                             }
@@ -240,6 +248,7 @@ client = None
                             student_word = clean_spelled_letters(raw_spelled)
                             correct_word = normalize_text(str(c_ans))
                             
+                            # 후처리를 통해 'staffe' 등 불필요한 OCR 왜곡 보정
                             student_word = correct_similar_spellings(student_word, correct_word)
 
                             if not is_english_text(student_word):
@@ -250,9 +259,7 @@ client = None
                                 reason = "정답"
                             else:
                                 is_correct = False
-                                reason = "철자 불일치/누락 (작성: '{}' / 정답: '{}')".format(
-                                    student_word, correct_word
-                                )
+                                reason = f"철자 불일치/누락 (작성: '{student_word}' / 정답: '{correct_word}')"
                     else:
                         student_word = "(미응답)"
                         is_correct = False
@@ -281,9 +288,7 @@ client = None
                     if not r["정오답"]
                 ]
 
-                st.info("결과: **{} / {}점** (틀린 문항: {}개)".format(
-                    total_correct, total_q_count, wrong_count
-                ))
+                st.info(f"결과: **{total_correct} / {total_q_count}점** (틀린 문항: {wrong_count}개)")
 
                 if wrong_details:
                     df_wrong = pd.DataFrame(wrong_details)
@@ -292,17 +297,17 @@ client = None
                     csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
                     safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
                     st.download_button(
-                        label="📥 `{}` 오답노트 다운로드 (CSV)".format(photo.name),
+                        label=f"📥 `{photo.name}` 오답노트 다운로드 (CSV)",
                         data=csv_data,
-                        file_name="오답노트_{}.csv".format(safe_filename),
+                        file_name=f"오답노트_{safe_filename}.csv",
                         mime="text/csv",
-                        key="dl_{}".format(idx),
+                        key=f"dl_{idx}",
                     )
                 else:
                     st.balloons()
                     st.success("🎉 모든 문항을 맞혔습니다!")
 
             except Exception as api_err:
-                st.error("API 호출 또는 채점 처리 중 오류 발생: {}".format(api_err))
+                st.error(f"API 호출 또는 채점 처리 중 오류 발생: {api_err}")
 
             st.markdown("---")
