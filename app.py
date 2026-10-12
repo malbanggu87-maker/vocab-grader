@@ -181,4 +181,24 @@ if start_grading:
         try:
             client = OpenAI(api_key=api_key)
         except Exception as e:
-            st.error("OpenAI 클라이언트 초기
+            st.error("OpenAI 클라이언트 초기화 오류: {}".format(e))
+            client = None
+
+        if client:
+            st.markdown("### 📊 채점 결과")
+
+            for idx, photo in enumerate(student_photos):
+                photo_key = extract_key_number(photo.name)
+
+                st.markdown("#### 📄 [{}/{}] 파일명: `{}` (번호: `{}`)".format(
+                    idx + 1, len(student_photos), photo.name, photo_key
+                ))
+
+                matched_answer_file = answer_file_map.get(photo_key)
+                if not matched_answer_file:
+                    st.error("❌ `{}`에 매칭되는 정답지(`{}`)를 찾지 못했습니다.".format(
+                        photo.name, photo_key
+                    ))
+                    continue
+
+                answer_dict = load_answer_dict_from
