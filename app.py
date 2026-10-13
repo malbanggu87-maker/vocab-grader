@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (오타 예시 차단 판정 모드)")
+st.title("📝 Grit English 채점실행 명령 (안정형 순수 OCR + 철자 검증 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -89,12 +89,17 @@ def compress_and_encode_image(uploaded_file, max_size=3840):
 
 
 def normalize_text(text: str) -> str:
+    """정답지 및 작성 답안 정규화"""
     if not text:
         return ""
     text = unicodedata.normalize("NFC", str(text)).lower().strip()
     text = re.sub(r"[^a-z0-9\s]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def is_english_text(text: str) -> bool:
+    return bool(re.search(r"[a-zA-Z]", text))
 
 
 def load_answer_dict_from_file(ans_file) -> dict:
@@ -159,25 +164,19 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                answer_context_str = "\n".join(
-                    ["- {}번 정답: {}".format(k, v) for k, v in answer_dict.items()]
-                )
-
-                # 💡 [핵심 패치]: 정답을 주되, 스펠링이 틀린 전형적인 오답(예: essential -> issiontial)을 예시로 들어 오답 판정을 강제함
+                # 💡 [핵심]: 정답을 주지 않고, 오직 각 문항 번호에 적힌 텍스트를 정직하게 읽어오게 함
                 prompt = (
-                    "당신은 영단어 시험지 채점관입니다. 아래 [문항별 정답]과 학생의 손글씨를 비교하여 정오답을 판정하세요.\n\n"
-                    "📋 [문항별 정답 리스트]:\n{}\n\n"
-                    "🚨 [초엄격 채점 규칙 - 자체보정 엄금]:\n"
-                    "1. 학생이 정답의 스펠링을 조금이라도 틀리게 적었거나(예: 정답이 'essential'인데 'issiontial'로 적은 경우), 철자가 누락되었으면 **무조건 '오답'**으로 판정하십시오.\n"
-                    "2. AI가 임의로 '학생이 이걸 의도했겠지' 하고 정답으로 처리하는 자의적 보정은 절대 금지합니다.\n"
-                    "3. 공란이거나 미응답인 경우에도 '오답'입니다.\n\n"
-                    "🚨 [출력 형식 준수]:\n"
-                    "반드시 아래 형식의 텍스트로만 답변하세요. 다른 설명은 일체 금지합니다.\n"
+                    "당신은 영단어 및 문장 시험지의 손글씨를 그대로 읽어내는 순수 OCR 리더입니다.\n"
+                    "시험지 사진의 1번부터 마지막 번호(25번 등)까지 각 문항 번호 옆에 적힌 학생의 손글씨 텍스트를 보이는 그대로 빠짐없이 읽어서 적으세요.\n"
+                    "정답이 무엇인지 유추하거나 교정하지 말고, 종이에 적힌 글자 모양 그대로 출력하세요.\n\n"
+                    "반드시 아래 형식으로만 답변하세요. 다른 설명은 절대 금지합니다.\n"
                     "형식:\n"
-                    "1: 정답\n"
-                    "3: 오답\n"
-                    "15: 오답"
-                ).format(answer_context_str)
+                    "1: create\n"
+                    "3: opportunity\n"
+                    "21: society a society\n"
+                    "24: changing society\n"
+                    "미응답인 경우: (미응답)"
+                )
 
                 try:
                     chat_messages = [
@@ -204,30 +203,44 @@ if start_grading:
 
                     response_text = response.choices[0].message.content
                     
-                    gpt_results = {}
+                    # 💡 유연한 파싱: AI가 어떤 형태로 출력을 하든 번호와 텍스트를 확실하게 추출
+                    gpt_parsed = {}
                     for line in response_text.splitlines():
                         line = line.strip()
                         match = re.search(r"^(\d+)\s*[:\.\-]?\s*(.*)$", line)
                         if match:
                             raw_num = match.group(1)
-                            verdict = match.group(2).strip()
+                            q_val = match.group(2).strip()
                             norm_num = normalize_q_num(raw_num)
-                            if norm_num and verdict:
-                                gpt_results[norm_num] = verdict
+                            if norm_num and q_val:
+                                gpt_parsed[norm_num] = q_val
 
                     records = []
                     for q_num_norm, c_ans in answer_dict.items():
-                        if q_num_norm in gpt_results:
-                            verdict = gpt_results[q_num_norm]
-                            
-                            if "정답" in verdict and "오답" not in verdict:
-                                is_correct = True
-                                student_word = normalize_text(str(c_ans))
-                                reason = "정답"
-                            else:
+                        if q_num_norm in gpt_parsed:
+                            raw_written = gpt_parsed[q_num_norm]
+
+                            if raw_written in ["(미응답)", "미응답", "(공란)", "공란", "none", "null", ""]:
+                                student_word = "(미응답)"
                                 is_correct = False
-                                student_word = "(철자 오류 또는 오답)"
-                                reason = "철자 불일치 / 오답"
+                                reason = "미응답 (공란)"
+                            else:
+                                student_word = normalize_text(raw_written)
+                                correct_word = normalize_text(str(c_ans))
+                                
+                                # 💡 채점 판정: 100% 파이썬 코드가 엄격한 텍스트 대조로 수행
+                                if not is_english_text(student_word):
+                                    is_correct = False
+                                    reason = "영단어 미작성"
+                                elif student_word == correct_word:
+                                    is_correct = True
+                                    reason = "정답"
+                                else:
+                                    # 단어/문장 철자 불일치 엄격 판정
+                                    is_correct = False
+                                    reason = "철자 불일치/누락 (작성: '{}' / 정답: '{}')".format(
+                                        raw_written, str(c_ans).strip()
+                                    )
                         else:
                             student_word = "(미응답)"
                             is_correct = False
