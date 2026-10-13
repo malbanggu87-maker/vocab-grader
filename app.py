@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="Grit English 스마트 채점실", page_icon="📝", layout="wide"
 )
 
-st.title("📝 Grit English 스마트 채점실 (자체 보정 항목 포함 정밀 검수 모드)")
+st.title("📝 Grit English 스마트 채점실 (정답 매칭 안전장치 강화 버전)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -207,11 +207,17 @@ if start_grading:
             for idx, photo in enumerate(student_photos):
                 photo_key = extract_key_number(photo.name)
                 matched_answer_file = answer_file_map.get(photo_key)
+                
+                # 🛡️ [안전장치]: 매칭되는 정답지가 없으면 강단 차단 및 경고 출력
                 if not matched_answer_file:
-                    st.error("❌ `{}`에 매칭되는 정답지를 찾지 못했습니다.".format(photo.name))
+                    st.error("❌ 파일명 `{}`에 해당하는 번호(`{}`)의 정답지 파일을 찾지 못했습니다! 정답지 파일명에 해당 유닛 번호(예: `30`)가 포함되어 있는지 확인해주세요.".format(photo.name, photo_key))
                     continue
 
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
+                if not answer_dict:
+                    st.error("❌ 정답지 파일 `{}`의 내용을 읽어오지 못했거나 데이터가 비어 있습니다.".format(matched_answer_file.name))
+                    continue
+
                 image = prepare_image(photo)
                 left_col_img, right_col_img = crop_columns(image)
 
@@ -273,7 +279,6 @@ if start_grading:
                             norm_num = normalize_q_num(raw_num)
                             if norm_num:
                                 gpt_parsed[norm_num] = q_val
-                                # [자체보정정답] 이거나 [오답]인 경우 검수 대상으로 플래그 설정
                                 if status in ["자체보정정답", "오답"]:
                                     flagged_items.add(norm_num)
 
@@ -296,7 +301,6 @@ if start_grading:
                                 is_correct = True
                                 reason = "확실한 정답"
                             else:
-                                # 자체 보정으로 판정되었거나 불일치하는 경우
                                 if q_num_norm in flagged_items and "[자체보정정답]" in response_text:
                                     is_correct = True
                                     reason = "AI 자체 보정 정답 (확인 필요)"
@@ -304,7 +308,7 @@ if start_grading:
                                     is_correct = False
                                     reason = "철자 오류 (작성: '{}' / 정답: '{}')".format(raw_written, str(c_ans).strip())
 
-                        is_flagged = (q_num_norm in flagged_items)
+                        is_flagged = (q_num_norm in flagged_items) or (not is_correct)
 
                         records.append({
                             "문항 번호": q_num_norm,
