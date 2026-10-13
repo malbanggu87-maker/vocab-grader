@@ -178,7 +178,6 @@ if start_grading:
                     ["- {}번 정답 기준: {}".format(k, v) for k, v in answer_dict.items()]
                 )
 
-                # 프롬프트: 정답을 주되, 자체보정(임의 정답처리)을 강력하게 금지시킴
                 prompt = (
                     "당신은 영단어 시험지의 학생 손글씨를 한 글자씩 그대로 읽어내는 엄격한 OCR 검증관입니다.\n\n"
                     "📋 [참고용 해당 시험지 문항별 정답 리스트]:\n{}\n\n"
@@ -219,16 +218,13 @@ if start_grading:
 
                     response_text = response.choices[0].message.content
                     
-                    # 💡 [강력한 파싱 로직]: 챗지피티가 어떤 형식이든 숫자가 포함된 줄을 지능적으로 찾아내도록 개선
                     gpt_parsed = {}
                     for line in response_text.splitlines():
                         line = line.strip()
-                        # 숫자가 맨 앞에 오거나 문장 내에 번호와 내용이 포함된 형태를 유연하게 추출
                         match = re.search(r"(\d+)\s*[:\.\-]?\s*(.*)", line)
                         if match:
                             raw_num = match.group(1)
                             q_val = match.group(2).strip()
-                            # 불필요한 기호나 괄호 제거
                             q_val = re.sub(r"^[\s:\.\-]+", "", q_val).strip()
                             norm_num = normalize_q_num(raw_num)
                             if norm_num and q_val:
@@ -247,7 +243,6 @@ if start_grading:
                                 student_word = clean_spelled_letters(raw_spelled)
                                 correct_word = normalize_text(str(c_ans))
                                 
-                                # 💡 채점 판정은 100% 파이썬 코드가 엄격한 문자열 일치 검사로만 수행
                                 if not is_english_text(student_word):
                                     is_correct = False
                                     reason = "영단어 미작성"
@@ -274,22 +269,4 @@ if start_grading:
 
                     total_q_count = len(records)
                     total_correct = sum(1 for r in records if r["정오답"])
-                    wrong_count = total_q_count - total_correct
-
-                    wrong_details = [
-                        {
-                            "문항 번호": r["문항 번호"],
-                            "학생 작성 답안": r["학생 작성 답안"],
-                            "교재 정답": r["교재 정답"],
-                            "사유": r["사유"],
-                        }
-                        for r in records
-                        if not r["정오답"]
-                    ]
-
-                    st.info("결과: **{} / {}점** (틀린 문항: {}개)".format(
-                        total_correct, total_q_count, wrong_count
-                    ))
-
-                    if wrong_details:
-                        df_wrong = pd.
+                    wrong_count
