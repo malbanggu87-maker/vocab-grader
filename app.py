@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (안전 모드)")
+st.title("📝 Grit English 채점실행 명령 (초엄격 철자 검증 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -109,7 +109,7 @@ def normalize_text(text: str) -> str:
 
 
 def correct_similar_spellings(student_word: str, correct_word: str) -> str:
-    """손글씨 인식 시 자주 혼동되는 유사 스펠링 교정 보조 함수"""
+    """손글씨 인식 시 자주 혼동되는 유사 스펠링 교정 보조 함수 (필요 최소한만 유지)"""
     if student_word == "pubic" and correct_word == "public":
         return "public"
     if student_word == "pie" and correct_word == "pile":
@@ -187,20 +187,20 @@ if start_grading:
                     ["- {}번 정답 기준: {}".format(k, v) for k, v in answer_dict.items()]
                 )
 
-                # 텍스트 기반 응답을 유도하는 안전한 프롬프트 설정
+                # 초엄격 검증 프롬프트 (스펠링 자체보정/의도적 정답처리 금지 명령 강화)
                 prompt = (
-                    "당신은 영단어 및 문장 시험지의 학생 손글씨를 철저히 검증하는 초정밀 OCR 판독관입니다.\n\n"
+                    "당신은 영단어 및 문장 시험지 채점관입니다. 학생의 손글씨 철자를 **눈에 보이는 알파벳 그대로** 읽어야 합니다.\n\n"
                     "📋 [참고용 해당 시험지 문항별 정답 리스트]:\n{}\n\n"
-                    "🚨 [출력 형식 절대 준수 규칙]:\n"
-                    "반드시 아래 형식의 텍스트로만 답변하세요. 다른 인사말이나 설명은 절대 적지 마세요.\n"
+                    "🚨 [절대 엄금 사항 - AI 자체보정 금지]:\n"
+                    "1. 학생이 정답 단어의 스펠링을 틀리게 적었거나(예: 정답이 'essential'인데 'issiontial'로 적음), 글자가 누락되었을 때, 이를 '학생이 의도한 정답이겠지' 하고 마음대로 교정하여 정답으로 간주하면 절대 안 됩니다.\n"
+                    "2. 철자가 조금이라도 틀렸다면 틀린 그 눈에 보이는 스펠링 그대로 추출하세요. (채점은 파이썬이 엄격하게 오답 처리합니다)\n"
+                    "3. 오직 'l', 'i', 'r', 'e' 등의 미세한 세로 획 모양 때문에 폰트 상 착각할 수 있는 명백한 OCR 오인식 건 외에는, 알파벳이 다르게 적힌 것은 무조건 있는 그대로 적으세요.\n\n"
+                    "🚨 [출력 형식 절대 준수]:\n"
+                    "반드시 아래 형식의 텍스트로만 답변하세요. 다른 설명이나 인사말은 절대 금지합니다.\n"
                     "형식: [문항번호]: [학생이 쓴 글자를 하이픈(-)으로 나눈 스펠링]\n"
                     "예시:\n"
-                    "1: p-u-b-l-i-c\n"
-                    "2: p-i-l-e\n"
-                    "15: (미응답)\n\n"
-                    "🚨 [손글씨 판독 규칙]:\n"
-                    "1. 'public', 'pile' 등의 'l'이나 'i' 세로 획을 정밀하게 확인하여 왜곡하지 마세요.\n"
-                    "2. 미응답인 경우 반드시 '(미응답)'으로 적으세요."
+                    "3: i-s-s-i-o-n-t-i-a-l\n"
+                    "15: (미응답)"
                 ).format(answer_context_str)
 
                 try:
@@ -220,7 +220,6 @@ if start_grading:
                         }
                     ]
 
-                    # Structured Output 대신 일반 Text Completions 호출 (에러율 대폭 감소)
                     response = client.chat.completions.create(
                         model=selected_model,
                         temperature=0.0,
@@ -229,11 +228,9 @@ if start_grading:
 
                     response_text = response.choices[0].message.content
                     
-                    # 정규식을 이용해 유연하고 안전하게 텍스트 파싱
                     gpt_parsed = {}
                     for line in response_text.splitlines():
                         line = line.strip()
-                        # "번호: 내용" 형태를 유연하게 탐지
                         match = re.search(r"^(\d+)\s*[:\.]\s*(.*)$", line)
                         if match:
                             q_num = normalize_q_num(match.group(1))
@@ -253,6 +250,7 @@ if start_grading:
                                 student_word = clean_spelled_letters(raw_spelled)
                                 correct_word = normalize_text(str(c_ans))
                                 
+                                # 유사 스펠링 교정은 명백한 폰트 착각(public/pubic 등)에만 제한적으로 적용
                                 student_word = correct_similar_spellings(student_word, correct_word)
 
                                 if not is_english_text(student_word):
