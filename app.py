@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (엄격 채점관 인지 모드)")
+st.title("📝 Grit English 채점실행 명령")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
