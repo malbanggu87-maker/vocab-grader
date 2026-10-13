@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="Grit English 스마트 채점실", page_icon="📝", layout="wide"
 )
 
-st.title("📝 Grit English 스마트 채점실 (정답 오인 방지 핀포인트 검수 모드)")
+st.title("📝 Grit English 스마트 채점실 (자체 보정 항목 포함 정밀 검수 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -191,7 +191,7 @@ if answer_files:
 
 st.markdown("---")
 
-start_grading = st.button("🚀 정밀 채점 및 검수 시작", type="primary", use_container_width=True)
+start_grading = st.button("🚀 정밀 채점 시작", type="primary", use_container_width=True)
 
 if start_grading:
     if not api_key or not answer_files or not student_photos:
@@ -222,17 +222,22 @@ if start_grading:
                 target_numbers_str = ", ".join([str(n) for n in target_numbers])
 
                 system_role = (
-                    "당신은 정밀 문자 판독(OCR) 전용 시스템입니다.\n"
-                    "제공된 이미지에서 지정된 문항 번호들에 해당하는 학생의 손글씨 답안을 찾아서 읽어내십시오.\n"
-                    "1. 답란이 비어있거나 내용이 없는 경우 무조건 '(미응답)'으로 출력하십시오.\n"
-                    "2. 보이는 알파벳 철자 그대로 필사하십시오."
+                    "당신은 정밀 문자 판독(OCR) 및 채점 검증 시스템입니다.\n"
+                    "제공된 이미지에서 지정된 문항 번호들에 해당하는 학생의 손글씨 답안을 읽고 교재 정답과 비교하십시오.\n"
+                    "판정 상태를 다음 3가지 중 하나로 분류하여 각 줄마다 출력하십시오:\n"
+                    "1. [확실한정답]: 학생 글씨가 정답과 완벽히 일치함\n"
+                    "2. [자체보정정답]: 학생 글씨에 오타/흘림이 있으나 문맥상 정답으로 유추·보정함\n"
+                    "3. [오답]: 명백히 틀렸거나 미응답임\n\n"
+                    "출력 형식: 번호: [상태] | 읽은답안"
                 )
 
                 prompt = (
-                    "첫 번째 이미지(좌측 칼럼)와 두 번째 이미지(우측 칼럼)를 보고 아래 문항 번호들의 학생 손글씨 답안을 읽으세요.\n\n"
-                    "📌 [찾아야 할 문항 번호 목록]: {}\n\n"
-                    "반드시 '번호: 답안' 형식으로만 출력하세요."
-                ).format(target_numbers_str)
+                    "첫 번째 이미지(좌측 칼럼)와 두 번째 이미지(우측 칼럼)를 보고 아래 문항들을 채점하세요.\n\n"
+                    "📌 [채점할 문항 목록과 정답]:\n"
+                )
+                for q_n in target_numbers_str.split(", "):
+                    ans_val = answer_dict.get(q_n, "")
+                    prompt += f"- {q_n}번: 정답({ans_val})\n"
 
                 try:
                     chat_messages = [
@@ -256,20 +261,27 @@ if start_grading:
                     response_text = response.choices[0].message.content
 
                     gpt_parsed = {}
+                    flagged_items = set()
+
                     for line in response_text.splitlines():
                         line = line.strip()
-                        match = re.search(r"^(\d+)\s*[:\.\-]?\s*(.*)$", line)
+                        match = re.search(r"^(\d+)\s*[:\.\-]?\s*\[?(확실한정답\vert{}자체보정정답\vert{}오답)\]?\s*\|?\s*(.*)$", line)
                         if match:
                             raw_num = match.group(1)
-                            q_val = match.group(2).strip()
+                            status = match.group(2)
+                            q_val = match.group(3).strip()
                             norm_num = normalize_q_num(raw_num)
-                            if norm_num and q_val:
+                            if norm_num:
                                 gpt_parsed[norm_num] = q_val
+                                # [자체보정정답] 이거나 [오답]인 경우 검수 대상으로 플래그 설정
+                                if status in ["자체보정정답", "오답"]:
+                                    flagged_items.add(norm_num)
 
                     records = []
                     total_q_count = len(answer_dict)
                     for q_num_norm, c_ans in answer_dict.items():
                         raw_written = gpt_parsed.get(q_num_norm, "(미응답)")
+                        
                         if raw_written in ["(미응답)", "미응답", "(공란)", "공란", "none", "null", ""]:
                             student_word = "(미응답)"
                             is_correct = False
@@ -282,17 +294,25 @@ if start_grading:
                                 reason = "영단어 미작성"
                             elif student_word == correct_word:
                                 is_correct = True
-                                reason = "정답"
+                                reason = "확실한 정답"
                             else:
-                                is_correct = False
-                                reason = "철자 오류 (작성: '{}' / 정답: '{}')".format(raw_written, str(c_ans).strip())
+                                # 자체 보정으로 판정되었거나 불일치하는 경우
+                                if q_num_norm in flagged_items and "[자체보정정답]" in response_text:
+                                    is_correct = True
+                                    reason = "AI 자체 보정 정답 (확인 필요)"
+                                else:
+                                    is_correct = False
+                                    reason = "철자 오류 (작성: '{}' / 정답: '{}')".format(raw_written, str(c_ans).strip())
+
+                        is_flagged = (q_num_norm in flagged_items)
 
                         records.append({
                             "문항 번호": q_num_norm,
                             "학생 작성 답안": raw_written if raw_written != "(미응답)" else "(미응답)",
                             "교재 정답": str(c_ans).strip(),
                             "정오답": is_correct,
-                            "사유": reason
+                            "사유": reason,
+                            "검수필요": is_flagged
                         })
 
                     st.session_state["records_{}".format(idx)] = records
@@ -310,28 +330,29 @@ for idx, photo in enumerate(student_photos if student_photos else []):
         total_q = st.session_state["total_q_{}".format(idx)]
 
         st.markdown("---")
-        st.markdown("### 📄 파일명: `{}` 채점 결과 및 검수".format(photo.name))
+        st.markdown(f"### 📄 파일명: `{photo.name}` 채점 완료")
 
-        wrong_items = [r for r in records if not r["정오답"]]
-        correct_items = [r for r in records if r["정오답"]]
-        correct_count = len(correct_items)
+        correct_count = sum(1 for r in records if r["정오답"])
+        review_items = [r for r in records if r["검수필요"]]
 
-        st.info("📊 점수: **{} / {}점** (현재 정답: {}개 / 오답: {}개)".format(
-            correct_count, len(records), correct_count, len(wrong_items)
-        ))
+        st.info(f"📊 최종 점수: **{correct_count} / {len(records)}점** | 🤖 AI 완벽 자동 통과: **{len(records) - len(review_items)}개** | ⚠️ 확인이 필요한 검수 문항(자체보정/오답): **{len(review_items)}개**")
 
-        # 💡 핵심 포인트: AI가 '정답' 처리한 것들 중 틀린 게 있는지 검수하는 구역 우선 배치
-        st.markdown("#### 🔍 [1단계 필수 검수] AI가 '정답' 처리한 항목 (틀렸는데 정답으로 잘못 읽은 경우 여기서 오답 처리하세요)")
-        if correct_items:
-            for item in correct_items:
+        if review_items:
+            st.markdown("#### 🔍 [스마트 예외 검수] AI가 헷갈려 '자체 보정'했거나 '오답' 처리한 항목만 확인하세요")
+            for item in review_items:
                 q_num = item["문항 번호"]
+                is_currently_correct = item["정오답"]
+
                 col1, col2, col3 = st.columns([1, 2, 1])
 
                 with col1:
-                    st.write("**{}번 문항**".format(q_num))
-                    st.write("AI 읽은 값: `{}`".format(item["학생 작성 답안"]))
-                    st.write("교재 정답: **{}**".format(item["교재 정답"]))
-                    st.success("현재: 정답")
+                    st.write(f"**{q_num}번 문항**")
+                    st.write(f"학생 작성: `{item['학생 작성 답안']}`")
+                    st.write(f"교재 정답: **{item['교재 정답']}**")
+                    if is_currently_correct:
+                        st.warning(f"상태: 정답 ({item['사유']})")
+                    else:
+                        st.error(f"상태: 오답 ({item['사유']})")
 
                 with col2:
                     if q_num.isdigit():
@@ -341,46 +362,26 @@ for idx, photo in enumerate(student_photos if student_photos else []):
                 with col3:
                     st.write("")
                     st.write("")
-                    if st.button("❌ 틀렸음 (오답으로 내리기)", key="fix_to_wrong_{}_{}".format(idx, q_num)):
-                        for r in records:
-                            if r["문항 번호"] == q_num:
-                                r["정오답"] = False
-                                r["사유"] = "선생님 검수: 오답 정정"
-                        st.session_state[rec_key] = records
-                        st.rerun()
+                    if is_currently_correct:
+                        if st.button("❌ 틀렸음 (오답으로 내리기)", key=f"to_wrong_{idx}_{q_num}"):
+                            for r in records:
+                                if r["문항 번호"] == q_num:
+                                    r["정오답"] = False
+                                    r["검수필요"] = False
+                                    r["사유"] = "선생님 검수: 오답 정정"
+                            st.session_state[rec_key] = records
+                            st.rerun()
+                    else:
+                        if st.button("⭕ 실제론 정답임", key=f"to_corr_{idx}_{q_num}"):
+                            for r in records:
+                                if r["문항 번호"] == q_num:
+                                    r["정오답"] = True
+                                    r["검수필요"] = False
+                                    r["사유"] = "선생님 검수: 정답 인정"
+                            st.session_state[rec_key] = records
+                            st.rerun()
         else:
-            st.write("현재 정답 처리된 항목이 없습니다.")
-
-        st.markdown("---")
-        st.markdown("#### 🔍 [2단계 검수] AI가 '오답' 처리한 항목 (실제로는 맞았는지 확인)")
-        if wrong_items:
-            for item in wrong_items:
-                q_num = item["문항 번호"]
-                col1, col2, col3 = st.columns([1, 2, 1])
-
-                with col1:
-                    st.write("**{}번 문항**".format(q_num))
-                    st.write("학생 작성: `{}`".format(item["학생 작성 답안"]))
-                    st.write("교재 정답: **{}**".format(item["교재 정답"]))
-                    st.error("현재: 오답 ({})".format(item["사유"]))
-
-                with col2:
-                    if q_num.isdigit():
-                        cropped = crop_question_box_dynamic(full_img, int(q_num), total_q)
-                        st.image(cropped, caption="학생 실제 손글씨 (확대)", width=280)
-
-                with col3:
-                    st.write("")
-                    st.write("")
-                    if st.button("⭕ 실제론 정답임", key="fix_to_corr_{}_{}".format(idx, q_num)):
-                        for r in records:
-                            if r["문항 번호"] == q_num:
-                                r["정오답"] = True
-                                r["사유"] = "선생님 검수: 정답 인정"
-                        st.session_state[rec_key] = records
-                        st.rerun()
-        else:
-            st.write("현재 오답 판정된 항목이 없습니다.")
+            st.success("🎉 AI가 모든 문항을 완벽하게 처리하여 검수할 항목이 없습니다!")
 
         st.markdown("---")
 
