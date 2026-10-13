@@ -77,7 +77,6 @@ def crop_question_box_dynamic(image: Image.Image, q_num: int, total_q_count: int
     """검수용 손글씨 이미지 미리보기 크롭 함수"""
     width, height = image.size
     if total_q_count <= 25:
-        # 중학 실력편 양식
         top_margin = height * 0.155
         mid_table_y = height * 0.525
         if 1 <= q_num <= 10:
@@ -101,7 +100,6 @@ def crop_question_box_dynamic(image: Image.Image, q_num: int, total_q_count: int
             y1 = int(bot_top + (idx * sub_h))
             y2 = int(bot_top + ((idx + 1) * sub_h))
     else:
-        # 능률고난도 36문항 양식
         top_margin = height * 0.17
         bottom_margin = height * 0.96
         content_height = bottom_margin - top_margin
@@ -269,7 +267,6 @@ if start_grading:
                             if norm_num and q_val:
                                 gpt_parsed[norm_num] = q_val
 
-                    # 채점 결과 생성
                     records = []
                     total_q_count = len(answer_dict)
                     for q_num_norm, c_ans in answer_dict.items():
@@ -299,7 +296,6 @@ if start_grading:
                             "사유": reason
                         })
 
-                    # 세션에 결과 저장하여 검수 UI에서 조율 가능하게 함
                     st.session_state["records_{}".format(idx)] = records
                     st.session_state["photo_{}".format(idx)] = image
                     st.session_state["total_q_{}".format(idx)] = total_q_count
@@ -307,7 +303,6 @@ if start_grading:
                 except Exception as err:
                     st.error("채점 오류 발생: {}".format(err))
 
-# 🔍 검수 및 최종 확인 UI 영역
 for idx, photo in enumerate(student_photos if student_photos else []):
     rec_key = "records_{}".format(idx)
     if rec_key in st.session_state:
@@ -350,9 +345,14 @@ for idx, photo in enumerate(student_photos if student_photos else []):
                         st.session_state[rec_key] = records
                         st.rerun()
 
-            # 최종 오답노트 다운로드
             df_wrong = pd.DataFrame([r for r in records if not r["정오답"]])
             if not df_wrong.empty:
                 csv_data = df_wrong[["문항 번호", "학생 작성 답안", "교재 정답", "사유"]].to_csv(index=False).encode("utf-8-sig")
                 st.download_button(
-                    label="📥 최종 오
+                    label="📥 최종 오답노트 다운로드 (CSV)",
+                    data=csv_data,
+                    file_name="오답노트_{}.csv".format(photo.name),
+                    key="dl_final_{}".format(idx)
+                )
+        else:
+            st.
