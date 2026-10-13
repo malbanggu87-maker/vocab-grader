@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (순수 2단계 격리 모드)")
+st.title("📝 Grit English 채점실행 명령 (OCR 강제 필사 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -174,16 +174,16 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                # 💡 [핵심]: 정답을 아예 제공하지 않고, 오직 순수 글자 읽기만 강제함
+                # 💡 [초강력 OCR 필사 지시]: AI의 자동 교정 성향을 억누르기 위해 시각적 형상을 글자 그대로 필사하도록 강제
                 prompt = (
-                    "당신은 영단어 시험지 순수 OCR 리더입니다.\n"
-                    "시험지 이미지의 각 문항 번호(1번부터 끝까지)에 대해 학생이 손글씨로 적은 알파벳 단어를 알파벳 단위로 하이픈(-)으로 나누어 읽어오세요.\n"
-                    "다른 설명이나 문장은 절대 적지 말고, 아래 형식으로만 답변하세요.\n\n"
+                    "당신은 감정이 없는 철저한 영단어 필사 로봇입니다.\n"
+                    "시험지 사진의 각 문항 번호 옆에 학생이 적어둔 손글씨를 **스마트폰 자판을 치듯 알파벳 단위로 철자 하나도 빼놓거나 바꾸지 말고** 그대로 옮겨적으세요.\n"
+                    "특히 스펠링이 틀렸거나(예: 'issiontial'), 글자가 잘못 적혀 있어도 절대 정답 형태로 고쳐서 읽지 말고, 눈에 보이는 형태 그대로 타이핑하세요.\n"
+                    "다른 설명은 일체 쓰지 말고 아래 형식으로만 답변하세요.\n\n"
                     "형식:\n"
                     "1: r-e-q-u-i-r-e\n"
-                    "2: c-r-e-a-t-i-v-e\n"
                     "3: i-s-s-i-o-n-t-i-a-l\n"
-                    "미응답인 경우: (미응답)"
+                    "15: (미응답)"
                 )
 
                 try:
@@ -235,7 +235,6 @@ if start_grading:
                                 student_word = clean_spelled_letters(raw_spelled)
                                 correct_word = normalize_text(str(c_ans))
                                 
-                                # 💡 채점 판정은 100% 파이썬 코드가 철저히 문자열 대조로만 수행
                                 if not is_english_text(student_word):
                                     is_correct = False
                                     reason = "영단어 미작성"
