@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (파이썬 엄격 채점 모드)")
+st.title("📝 Grit English 채점실행 명령 (절대 불일치 판정 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -88,28 +88,13 @@ def compress_and_encode_image(uploaded_file, max_size=3840):
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
-def clean_spelled_letters(raw_letters: str) -> str:
-    """하이픈과 특수문자를 제거하고 소문자 알파벳만 정규화"""
-    if not raw_letters:
-        return ""
-    text = unicodedata.normalize("NFC", str(raw_letters)).lower().strip()
-    text = re.sub(r"[-_.,]", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
 def normalize_text(text: str) -> str:
-    """정답지 영단어/문장 정규화"""
     if not text:
         return ""
     text = unicodedata.normalize("NFC", str(text)).lower().strip()
     text = re.sub(r"[^a-z0-9\s]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
-
-
-def is_english_text(text: str) -> bool:
-    return bool(re.search(r"[a-zA-Z]", text))
 
 
 def load_answer_dict_from_file(ans_file) -> dict:
@@ -174,17 +159,27 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                # AI에게는 정답을 주지 않고, 오직 "손글씨 스펠링만 순수하게 읽어오라"고 지시
-                prompt = (
-                    "당신은 영단어 시험지 전용 순수 OCR 스크립트입니다.\n"
-                    "시험지 이미지의 각 문항 번호(1번~25번 등) 위치에 **학생이 손글씨로 적은 알파벳 철자를 보이는 그대로 빠짐없이** 읽어서 적으세요.\n"
-                    "절대로 정답이 무엇일지 유추하거나 교정하지 말고, 눈에 보이는 글자 그대로 적어야 합니다.\n\n"
-                    "반드시 아래 형식의 텍스트로만 답변하세요. 다른 설명은 일체 적지 마세요.\n"
-                    "형식:\n"
-                    "1: r-e-q-u-i-r-e\n"
-                    "3: i-s-s-i-o-n-t-i-a-l\n"
-                    "15: (미응답)"
+                # 교재 정답 리스트를 프롬프트에 포함하여 정오표 판정 지시
+                answer_context_str = "\n".join(
+                    ["- {}번 정답: {}".format(k, v) for k, v in answer_dict.items()]
                 )
+
+                prompt = (
+                    "당신은 매우 엄격한 영단어 시험지 검증 로봇입니다.\n"
+                    "아래에 제공된 [문항별 정답]과 시험지 이미지에 적힌 [학생의 손글씨]를 1대1로 정밀 비교하세요.\n\n"
+                    "📋 [문항별 정답 리스트]:\n{}\n\n"
+                    "🚨 [초엄격 채점 절대 규칙 - 자체 보정 절대 금지]:\n"
+                    "1. 학생이 스펠링을 조금이라도 틀렸거나(예: 'essential'을 'issiontial'로 적음), 철자가 누락되었거나, 다른 단어를 적었으면 **무조건 '오답'**으로 판정해야 합니다.\n"
+                    "2. '학생이 비슷하게 썼으니 맞게 해줘야지'라는 식의 자체 보정이나 유연한 해석을 하면 시험 채점이 망가지므로 절대 금지합니다.\n"
+                    "3. 공란이거나 미응답인 경우에도 '오답'입니다.\n\n"
+                    "🚨 [출력 형식 절대 준수]:\n"
+                    "반드시 아래 형식의 텍스트로만 답변하세요. 다른 설명은 일체 금지합니다.\n"
+                    "형식: [문항번호]: [정답 또는 오답]\n"
+                    "예시:\n"
+                    "1: 정답\n"
+                    "3: 오답\n"
+                    "15: 오답"
+                ).format(answer_context_str)
 
                 try:
                     chat_messages = [
@@ -211,44 +206,33 @@ if start_grading:
 
                     response_text = response.choices[0].message.content
                     
-                    gpt_parsed = {}
+                    gpt_results = {}
                     for line in response_text.splitlines():
                         line = line.strip()
                         match = re.search(r"^(\d+)\s*[:\.]\s*(.*)$", line)
                         if match:
                             q_num = normalize_q_num(match.group(1))
-                            q_val = match.group(2).strip()
-                            gpt_parsed[q_num] = q_val
+                            verdict = match.group(2).strip()
+                            gpt_results[q_num] = verdict
 
                     records = []
                     for q_num_norm, c_ans in answer_dict.items():
-                        if q_num_norm in gpt_parsed:
-                            raw_spelled = gpt_parsed[q_num_norm]
-
-                            if raw_spelled in ["(미응답)", "미응답", "(공란)", "공란", "none", "null", ""]:
-                                student_word = "(미응답)"
-                                is_correct = False
-                                reason = "미응답 (공란)"
+                        if q_num_norm in gpt_results:
+                            verdict = gpt_results[q_num_norm]
+                            
+                            # AI가 '정답'이라고 명시한 경우에만 정답 처리, 그 외(오답, 미응답 등)는 모두 철저히 오답 처리
+                            if "정답" in verdict and "오답" not in verdict:
+                                is_correct = True
+                                student_word = normalize_text(str(c_ans)) # 일치하므로 정답 처리
+                                reason = "정답"
                             else:
-                                student_word = clean_spelled_letters(raw_spelled)
-                                correct_word = normalize_text(str(c_ans))
-                                
-                                # 🔥 [핵심 안전장치]: AI 판단을 완전히 배제하고 오직 파이썬 코드가 글자 일치 여부를 엄격히 판정
-                                if not is_english_text(student_word):
-                                    is_correct = False
-                                    reason = "영단어 미작성"
-                                elif student_word == correct_word:
-                                    is_correct = True
-                                    reason = "정답"
-                                else:
-                                    is_correct = False
-                                    reason = "철자 불일치/누락 (작성: '{}' / 정답: '{}')".format(
-                                        student_word, correct_word
-                                    )
+                                is_correct = False
+                                student_word = "(오기 또는 오답)"
+                                reason = "철자 불일치 / 오답"
                         else:
-                            student_word = "(미응답)"
                             is_correct = False
-                            reason = "시험지에서 해당 문항 번호를 찾지 못함 (미인식/미응답)"
+                            student_word = "(미응답)"
+                            reason = "시험지에서 해당 문항 번호를 찾지 못함"
 
                         records.append({
                             "문항 번호": q_num_norm,
