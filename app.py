@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (초엄격 철자 검증 모드)")
+st.title("📝 Grit English 채점실행 명령 (파이썬 엄격 채점 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -89,7 +89,7 @@ def compress_and_encode_image(uploaded_file, max_size=3840):
 
 
 def clean_spelled_letters(raw_letters: str) -> str:
-    """하이픈을 제거하고 알파벳과 공백을 유지한 정규화된 문자열 반환"""
+    """하이픈과 특수문자를 제거하고 소문자 알파벳만 정규화"""
     if not raw_letters:
         return ""
     text = unicodedata.normalize("NFC", str(raw_letters)).lower().strip()
@@ -99,22 +99,13 @@ def clean_spelled_letters(raw_letters: str) -> str:
 
 
 def normalize_text(text: str) -> str:
-    """정답지 영단어/문장 정규화 (소문자화 및 불필요한 문장부호 제거, 공백 유지)"""
+    """정답지 영단어/문장 정규화"""
     if not text:
         return ""
     text = unicodedata.normalize("NFC", str(text)).lower().strip()
     text = re.sub(r"[^a-z0-9\s]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
-
-
-def correct_similar_spellings(student_word: str, correct_word: str) -> str:
-    """손글씨 인식 시 자주 혼동되는 유사 스펠링 교정 보조 함수 (필요 최소한만 유지)"""
-    if student_word == "pubic" and correct_word == "public":
-        return "public"
-    if student_word == "pie" and correct_word == "pile":
-        return "pile"
-    return student_word
 
 
 def is_english_text(text: str) -> bool:
@@ -183,25 +174,17 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                answer_context_str = "\n".join(
-                    ["- {}번 정답 기준: {}".format(k, v) for k, v in answer_dict.items()]
-                )
-
-                # 초엄격 검증 프롬프트 (스펠링 자체보정/의도적 정답처리 금지 명령 강화)
+                # AI에게는 정답을 주지 않고, 오직 "손글씨 스펠링만 순수하게 읽어오라"고 지시
                 prompt = (
-                    "당신은 영단어 및 문장 시험지 채점관입니다. 학생의 손글씨 철자를 **눈에 보이는 알파벳 그대로** 읽어야 합니다.\n\n"
-                    "📋 [참고용 해당 시험지 문항별 정답 리스트]:\n{}\n\n"
-                    "🚨 [절대 엄금 사항 - AI 자체보정 금지]:\n"
-                    "1. 학생이 정답 단어의 스펠링을 틀리게 적었거나(예: 정답이 'essential'인데 'issiontial'로 적음), 글자가 누락되었을 때, 이를 '학생이 의도한 정답이겠지' 하고 마음대로 교정하여 정답으로 간주하면 절대 안 됩니다.\n"
-                    "2. 철자가 조금이라도 틀렸다면 틀린 그 눈에 보이는 스펠링 그대로 추출하세요. (채점은 파이썬이 엄격하게 오답 처리합니다)\n"
-                    "3. 오직 'l', 'i', 'r', 'e' 등의 미세한 세로 획 모양 때문에 폰트 상 착각할 수 있는 명백한 OCR 오인식 건 외에는, 알파벳이 다르게 적힌 것은 무조건 있는 그대로 적으세요.\n\n"
-                    "🚨 [출력 형식 절대 준수]:\n"
-                    "반드시 아래 형식의 텍스트로만 답변하세요. 다른 설명이나 인사말은 절대 금지합니다.\n"
-                    "형식: [문항번호]: [학생이 쓴 글자를 하이픈(-)으로 나눈 스펠링]\n"
-                    "예시:\n"
+                    "당신은 영단어 시험지 전용 순수 OCR 스크립트입니다.\n"
+                    "시험지 이미지의 각 문항 번호(1번~25번 등) 위치에 **학생이 손글씨로 적은 알파벳 철자를 보이는 그대로 빠짐없이** 읽어서 적으세요.\n"
+                    "절대로 정답이 무엇일지 유추하거나 교정하지 말고, 눈에 보이는 글자 그대로 적어야 합니다.\n\n"
+                    "반드시 아래 형식의 텍스트로만 답변하세요. 다른 설명은 일체 적지 마세요.\n"
+                    "형식:\n"
+                    "1: r-e-q-u-i-r-e\n"
                     "3: i-s-s-i-o-n-t-i-a-l\n"
                     "15: (미응답)"
-                ).format(answer_context_str)
+                )
 
                 try:
                     chat_messages = [
@@ -250,9 +233,7 @@ if start_grading:
                                 student_word = clean_spelled_letters(raw_spelled)
                                 correct_word = normalize_text(str(c_ans))
                                 
-                                # 유사 스펠링 교정은 명백한 폰트 착각(public/pubic 등)에만 제한적으로 적용
-                                student_word = correct_similar_spellings(student_word, correct_word)
-
+                                # 🔥 [핵심 안전장치]: AI 판단을 완전히 배제하고 오직 파이썬 코드가 글자 일치 여부를 엄격히 판정
                                 if not is_english_text(student_word):
                                     is_correct = False
                                     reason = "영단어 미작성"
