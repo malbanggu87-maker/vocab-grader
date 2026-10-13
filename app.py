@@ -86,7 +86,6 @@ def prepare_image(uploaded_file):
 def crop_columns(image: Image.Image):
     """시험지 이미지를 좌측 칼럼과 우측 칼럼으로 2단 분할"""
     width, height = image.size
-    # 헤더 제외 (상단 18% 제외), 하단 일부 제외
     top = int(height * 0.18)
     bottom = int(height * 0.95)
     mid_x = int(width * 0.50)
@@ -185,7 +184,33 @@ if start_grading:
                 target_numbers = sorted([int(k) for k in answer_dict.keys() if k.isdigit()])
                 target_numbers_str = ", ".join([str(n) for n in target_numbers])
 
-                # 💡 [전면 개편 초엄격 시스템 롤]: 정답 단어 미제공, 오직 단일 문항 이미지의 눈에 보이는 알파벳 1:1 필사 지시
                 system_role = (
                     "당신은 정밀 문자 판독(OCR) 전용 시스템입니다.\n"
-                    "주어진 영역별 이미지에서 학생이 직접 쓴 손글씨 알파벳을 철자
+                    "주어진 영역별 이미지에서 학생이 직접 쓴 손글씨 알파벳을 철자 하나 다르게 바꾸지 않고 있는 그대로 타이핑하십시오.\n"
+                    "1. 단어의 자의적 보정/유추/자동 교정은 철저히 금지됩니다. (예: 'hol'을 'hole'로, 'attribut'를 'attribute'로, 'verity'를 'variety'로, 'sentense'를 'sentence'로 고쳐 쓰지 말고 눈에 보이는 알파벳 그대로 적으시오)\n"
+                    "2. 답란에 아무것도 쓰여있지 않거나 비어있는 공란은 무조건 '(미응답)'으로 출력하십시오.\n"
+                    "3. 취소선이 그어진 단어는 무시하고, 새로 고쳐 쓴 최종 단어만 필사하십시오."
+                )
+
+                prompt = (
+                    "두 개의 이미지(첫 번째: 좌측 문항 칼럼, 두 번째: 우측 문항 칼럼)에서 아래 문항 번호들에 해당되는 학생의 손글씨 답안을 읽으세요.\n\n"
+                    "📌 [판독해야 할 문항 번호 목록]: {}\n\n"
+                    "반드시 아래 형식으로만 출력하세요. 설명은 금지합니다.\n"
+                    "1: fill\n"
+                    "5: hol\n"
+                    "10: sentense\n"
+                    "18: opprove"
+                ).format(target_numbers_str)
+
+                try:
+                    chat_messages = [
+                        {"role": "system", "content": system_role},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:image/jpeg;base64,{}".format(left_b64),
+                                        "detail": "high"
