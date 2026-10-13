@@ -74,7 +74,6 @@ def crop_columns(image: Image.Image):
 
 
 def crop_question_box_dynamic(image: Image.Image, q_num: int, total_q_count: int = 36):
-    """검수용 손글씨 이미지 미리보기 크롭 함수"""
     width, height = image.size
     if total_q_count <= 25:
         top_margin = height * 0.155
@@ -355,4 +354,5 @@ for idx, photo in enumerate(student_photos if student_photos else []):
                     key="dl_final_{}".format(idx)
                 )
         else:
-            st.
+            st.balloons()
+            st.success("🎉 모든 문항이 정답입니다!")
