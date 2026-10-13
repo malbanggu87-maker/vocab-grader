@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (안전 완성 모드)")
+st.title("📝 Grit English 채점실행 명령 (순수 2단계 격리 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -174,24 +174,17 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                answer_context_str = "\n".join(
-                    ["- {}번 정답 기준: {}".format(k, v) for k, v in answer_dict.items()]
-                )
-
+                # 💡 [핵심]: 정답을 아예 제공하지 않고, 오직 순수 글자 읽기만 강제함
                 prompt = (
-                    "당신은 영단어 시험지의 학생 손글씨를 한 글자씩 그대로 읽어내는 엄격한 OCR 검증관입니다.\n\n"
-                    "📋 [참고용 해당 시험지 문항별 정답 리스트]:\n{}\n\n"
-                    "🚨 [필독 채점 규칙 - 자체보정 절대 금지]:\n"
-                    "1. 학생이 정답 단어의 스펠링을 틀리게 적었거나(예: 'essential'을 'issiontial'로 적음), 글자가 누락되었을 때, 이를 '의도한 정답이겠지' 하고 교정하여 적지 마십시오.\n"
-                    "2. 반드시 학생이 종이에 적은 **눈에 보이는 실제 알파벳 철자 그대로** 하이픈(-)으로 나누어 적으십시오. 철자가 틀렸다면 틀린 그 모양 그대로 적어야 합니다.\n"
-                    "3. 공란이거나 미응답인 경우 '(미응답)'으로 적으십시오.\n\n"
-                    "🚨 [출력 형식 준수]:\n"
-                    "반드시 아래 형식으로만 답변하세요.\n"
+                    "당신은 영단어 시험지 순수 OCR 리더입니다.\n"
+                    "시험지 이미지의 각 문항 번호(1번부터 끝까지)에 대해 학생이 손글씨로 적은 알파벳 단어를 알파벳 단위로 하이픈(-)으로 나누어 읽어오세요.\n"
+                    "다른 설명이나 문장은 절대 적지 말고, 아래 형식으로만 답변하세요.\n\n"
                     "형식:\n"
                     "1: r-e-q-u-i-r-e\n"
+                    "2: c-r-e-a-t-i-v-e\n"
                     "3: i-s-s-i-o-n-t-i-a-l\n"
-                    "15: (미응답)"
-                ).format(answer_context_str)
+                    "미응답인 경우: (미응답)"
+                )
 
                 try:
                     chat_messages = [
@@ -221,11 +214,10 @@ if start_grading:
                     gpt_parsed = {}
                     for line in response_text.splitlines():
                         line = line.strip()
-                        match = re.search(r"(\d+)\s*[:\.\-]?\s*(.*)", line)
+                        match = re.search(r"^(\d+)\s*[:\.\-]?\s*(.*)$", line)
                         if match:
                             raw_num = match.group(1)
                             q_val = match.group(2).strip()
-                            q_val = re.sub(r"^[\s:\.\-]+", "", q_val).strip()
                             norm_num = normalize_q_num(raw_num)
                             if norm_num and q_val:
                                 gpt_parsed[norm_num] = q_val
@@ -243,6 +235,7 @@ if start_grading:
                                 student_word = clean_spelled_letters(raw_spelled)
                                 correct_word = normalize_text(str(c_ans))
                                 
+                                # 💡 채점 판정은 100% 파이썬 코드가 철저히 문자열 대조로만 수행
                                 if not is_english_text(student_word):
                                     is_correct = False
                                     reason = "영단어 미작성"
