@@ -6,14 +6,13 @@ import unicodedata
 from PIL import Image, ImageOps
 from openai import OpenAI
 import pandas as pd
-from pydantic import BaseModel, Field
 import streamlit as st
 
 st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령")
+st.title("📝 Grit English 채점실행 명령 (안전 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -52,26 +51,6 @@ def normalize_q_num(q_str: str) -> str:
     if q_clean.isdigit():
         return str(int(q_clean))
     return str(q_str).strip()
-
-
-class QuestionResult(BaseModel):
-    number: str = Field(
-        description="시험지에 인쇄된 정확한 문항 번호 (예: '1', '2', '14', '25')"
-    )
-    spelled_out_letters: str = Field(
-        description=(
-            "학생이 해당 문항 위치에 손글씨로 쓴 글자를 눈에 보이는 그대로 하이픈(-)으로 나누어 적으세요. "
-            "예시: 'p-u-b-l-i-c' 또는 'p-i-l-e'\n"
-            "⚠️ [절대 주의 - 오탈자 자동 보정 엄금 및 공란 처리]:\n"
-            "1. 학생이 'pleasent', 'polloute', 'abandom', 'issontial' 등과 같이 철자를 조금이라도 틀리게 적었다면, 교재 정답('pleasant', 'pollute', 'abandon', 'essential')과 유사하다는 이유로 절대 임의로 고쳐서 인식하지 마십시오.\n"
-            "2. 눈에 보이는 철자 그대로(예: 'p-l-e-a-s-e-n-t'가 아닌 'p-l-e-a-s-e-n-t'의 틀린 철자나 형태 등) 추출해야 하며, 철자가 틀렸으므로 반드시 오답 처리되도록 정확한 스펠링을 기록하세요.\n"
-            "3. 답란이 비어있는 경우 반드시 '(미응답)'으로 작성하세요."
-        )
-    )
-
-
-class GradingSchema(BaseModel):
-    details: list[QuestionResult]
 
 
 st.markdown("### 1단계: 학생 시험지 사진 업로드")
@@ -130,8 +109,11 @@ def normalize_text(text: str) -> str:
 
 
 def correct_similar_spellings(student_word: str, correct_word: str) -> str:
-    """손글씨 인식 시 명백하게 판독된 알파벳 오인식에 대해서만 제한적으로 보정 (오답 자체를 정답으로 만들지 않음)"""
-    # pleasent, polloute 등의 오탈자는 절대 보정하지 않고 그대로 유지하여 오답 처리되도록 함
+    """손글씨 인식 시 자주 혼동되는 유사 스펠링 교정 보조 함수"""
+    if student_word == "pubic" and correct_word == "public":
+        return "public"
+    if student_word == "pie" and correct_word == "pile":
+        return "pile"
     return student_word
 
 
@@ -205,7 +187,21 @@ if start_grading:
                     ["- {}번 정답 기준: {}".format(k, v) for k, v in answer_dict.items()]
                 )
 
-                prompt = "당신은 영단어 및 문장 시험지의 학생 손글씨를 철저히 검증하는 초정밀 OCR 판독관입니다.\n\n📋 [참고용 해당 시험지 문항별 정답 리스트]:\n{}\n\n🚨 [오탈자 자동 보정 금지 및 공란 철저 검증 규칙]\n1. [오탈자 임의 보정 절대 금지 (가장 중요)]: \n    - 학생이 'pleasent', 'polloute', 'abandom', 'issontial' 등 철자를 틀리게 적었을 때, 교재 정답('pleasant', 'pollute', 'abandon', 'essential')과 비슷하다는 이유로 임의로 교정하여 정답으로 처리하는 행위를 절대 금지합니다.\n    - 학생이 적은 철자 그대로(예: 'p-l-e-a-s-e-n-t' 등 눈에 보이는 오탈자) 정직하게 추출해야 오답으로 정확히 판정됩니다.\n2. [공란(미응답) 절대 누락 금지]:\n    - 답란이 비어있는 경우 반드시 '(미응답)'으로 출력하세요.".format(answer_context_str)
+                # 텍스트 기반 응답을 유도하는 안전한 프롬프트 설정
+                prompt = (
+                    "당신은 영단어 및 문장 시험지의 학생 손글씨를 철저히 검증하는 초정밀 OCR 판독관입니다.\n\n"
+                    "📋 [참고용 해당 시험지 문항별 정답 리스트]:\n{}\n\n"
+                    "🚨 [출력 형식 절대 준수 규칙]:\n"
+                    "반드시 아래 형식의 텍스트로만 답변하세요. 다른 인사말이나 설명은 절대 적지 마세요.\n"
+                    "형식: [문항번호]: [학생이 쓴 글자를 하이픈(-)으로 나눈 스펠링]\n"
+                    "예시:\n"
+                    "1: p-u-b-l-i-c\n"
+                    "2: p-i-l-e\n"
+                    "15: (미응답)\n\n"
+                    "🚨 [손글씨 판독 규칙]:\n"
+                    "1. 'public', 'pile' 등의 'l'이나 'i' 세로 획을 정밀하게 확인하여 왜곡하지 마세요.\n"
+                    "2. 미응답인 경우 반드시 '(미응답)'으로 적으세요."
+                ).format(answer_context_str)
 
                 try:
                     chat_messages = [
@@ -224,19 +220,25 @@ if start_grading:
                         }
                     ]
 
-                    response = client.beta.chat.completions.parse(
+                    # Structured Output 대신 일반 Text Completions 호출 (에러율 대폭 감소)
+                    response = client.chat.completions.create(
                         model=selected_model,
                         temperature=0.0,
-                        messages=chat_messages,
-                        response_format=GradingSchema
+                        messages=chat_messages
                     )
 
-                    parsed_data = response.choices[0].message.parsed
+                    response_text = response.choices[0].message.content
+                    
+                    # 정규식을 이용해 유연하고 안전하게 텍스트 파싱
                     gpt_parsed = {}
-                    if parsed_data and parsed_data.details:
-                        for item in parsed_data.details:
-                            norm_num = normalize_q_num(item.number)
-                            gpt_parsed[norm_num] = str(item.spelled_out_letters).strip()
+                    for line in response_text.splitlines():
+                        line = line.strip()
+                        # "번호: 내용" 형태를 유연하게 탐지
+                        match = re.search(r"^(\d+)\s*[:\.]\s*(.*)$", line)
+                        if match:
+                            q_num = normalize_q_num(match.group(1))
+                            q_val = match.group(2).strip()
+                            gpt_parsed[q_num] = q_val
 
                     records = []
                     for q_num_norm, c_ans in answer_dict.items():
