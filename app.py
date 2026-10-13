@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (2단 칼럼 + 핵심 문항 정밀 크롭 병행 엔진)")
+st.title("📝 Grit English 채점실행 명령 (2단 칼럼 + 20번대 정밀 크롭 병행 엔진)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -96,7 +96,7 @@ def crop_columns(image: Image.Image):
 
 
 def crop_single_box(image: Image.Image, q_num: int):
-    """특정 문항 번호만 콕 집어서 정밀 크롭 (20번 등 수정 흔적 대응용)"""
+    """특정 문항 번호만 콕 집어서 정밀 크롭 (20번, 21번 등 중복 단어 대응용)"""
     width, height = image.size
     top_margin = height * 0.178
     bottom_margin = height * 0.962
@@ -180,7 +180,7 @@ if answer_files:
 
 st.markdown("---")
 
-start_grading = st.button("🚀 채점 시작 (2단 + 20번 정밀 보정 엔진)", type="primary", use_container_width=True)
+start_grading = st.button("🚀 채점 시작 (2단 + 20, 21번 정밀 보정 엔진)", type="primary", use_container_width=True)
 
 if start_grading:
     if not api_key or not answer_files or not student_photos:
@@ -222,8 +222,8 @@ if start_grading:
                 system_role = (
                     "당신은 정밀 문자 판독(OCR) 전용 시스템입니다.\n"
                     "제공된 좌측/우측 칼럼 이미지에서 지정된 문항 번호들에 해당하는 학생의 손글씨 답안을 찾아서 정확히 읽어내십시오.\n"
-                    "1. 단어의 자의적 보정/유추/자동 교정은 철저히 금지됩니다. (스펠링이 틀렸거나 수정 흔적이 있어도 보이는 그대로 읽을 것)\n"
-                    "2. 답란이 비어있거나 내용이 없는 경우 반드시 '(미응답)'으로 출력하십시오.\n"
+                    "1. 답란이 비어있거나 내용이 없는 경우 반드시 '(미응답)'으로 출력하십시오.\n"
+                    "2. 단어의 자의적 보정/유추/자동 교정은 철저히 금지됩니다. (스펠링이 틀렸어도 보이는 그대로 읽을 것)\n"
                     "3. 취소선이 그어진 단어는 무시하고 새로 고쳐 쓴 최종 단어만 읽으십시오."
                 )
 
@@ -233,9 +233,9 @@ if start_grading:
                     "📌 [찾아야 할 문항 번호 목록]: {}\n\n"
                     "반드시 아래 형식으로만 출력하세요. 다른 설명은 절대 금지합니다.\n"
                     "형식 예시:\n"
-                    "1: Otherwise\n"
-                    "20: annu...el\n"
-                    "21: Publication"
+                    "1: mentor\n"
+                    "20: ruin\n"
+                    "21: ruin"
                 ).format(target_numbers_str)
 
                 try:
@@ -282,24 +282,26 @@ if start_grading:
                             if norm_num and q_val:
                                 gpt_parsed[norm_num] = q_val
 
-                    # 💡 [20번 등 핵심 문항 정밀 크롭 2차 검증 로직]: 20번 문항은 개별 크롭 이미지로 한 번 더 확실하게 확인
-                    if "20" in answer_dict:
-                        try:
-                            cropped_20 = crop_single_box(image, 20)
-                            b64_20 = image_to_base64(cropped_20)
-                            res_20 = client.chat.completions.create(
-                                model=selected_model,
-                                temperature=0.0,
-                                messages=[
-                                    {"role": "system", "content": "이 이미지는 시험지 20번 문항입니다. 여기에 적힌 손글씨 답안만 오직 그대로 출력하세요."},
-                                    {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,{}".format(b64_20), "detail": "high"}}]}
-                                ]
-                            )
-                            val_20 = res_20.choices[0].message.content.strip().splitlines()[0]
-                            if val_20:
-                                gpt_parsed["20"] = val_20
-                        except Exception:
-                            pass
+                    # 💡 [20번, 21번 문항 개별 크롭 2차 검증 로직]: 중복 단어 영역 정밀 확인
+                    for target_q in [20, 21]:
+                        q_str = str(target_q)
+                        if q_str in answer_dict:
+                            try:
+                                cropped_box = crop_single_box(image, target_q)
+                                b64_box = image_to_base64(cropped_box)
+                                res_box = client.chat.completions.create(
+                                    model=selected_model,
+                                    temperature=0.0,
+                                    messages=[
+                                        {"role": "system", "content": "이 이미지는 시험지 {}번 문항입니다. 여기에 적힌 손글씨 답안만 오직 그대로 출력하세요. 비어있으면 (미응답) 출력.".format(target_q)},
+                                        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,{}".format(b64_box), "detail": "high"}}]}
+                                    ]
+                                )
+                                val_box = res_box.choices[0].message.content.strip().splitlines()[0]
+                                if val_box:
+                                    gpt_parsed[q_str] = val_box
+                            except Exception:
+                                pass
 
                     records = []
                     for q_num_norm, c_ans in answer_dict.items():
