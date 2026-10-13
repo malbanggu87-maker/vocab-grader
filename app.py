@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (문항 번호 지목형 OCR 모드)")
+st.title("📝 Grit English 채점실행 명령 (오타 보정 원천 차단 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -164,23 +164,22 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                # 💡 [핵심 해결책]: 엑셀에 존재하는 문항 번호 목록을 AI에게 직접 주어 해당 번호의 글자를 빠짐없이 읽어오게 강제함
                 target_numbers_str = ", ".join(list(answer_dict.keys()))
 
+                # 💡 [핵심 패치]: 오타 자동 보정을 엄격히 금지하고 눈에 보이는 철자 그대로 읽도록 강제
                 prompt = (
-                    "당신은 영단어 및 문장 시험지의 손글씨를 정밀하게 읽어내는 OCR 리더입니다.\n"
-                    "첨부된 시험지 이미지에서 아래 지정된 문항 번호들에 해당하는 학생의 손글씨 답안을 빠짐없이 찾아 읽으세요.\n\n"
+                    "당신은 영단어 및 문장 시험지의 손글씨를 한 글자도 빠짐없이 철저하게 필사하는 OCR 로봇입니다.\n"
+                    "아래 지정된 문항 번호 목록에 해당하는 학생의 손글씨 답안을 찾으세요.\n\n"
                     "📌 [찾아야 할 문항 번호 목록]: {}\n\n"
-                    "⚠️ [주의사항]:\n"
-                    "- 2열 구조(좌측 1~10번, 우측 11~20번)와 하단의 서술형/문장형(21~25번)을 모두 빠짐없이 확인하세요.\n"
-                    "- 정답이 무엇일지 유추하거나 교정하지 말고, 시험지에 적힌 글자 그대로 읽으세요.\n"
-                    "- 미응답인 경우 '(미응답)'으로 적으세요.\n\n"
+                    "🚨 [초엄격 필사 규칙 - 오타 자동 보정 절대 금지]:\n"
+                    "1. 학생이 스펠링을 틀렸거나(예: 'pollute'를 'polloute'로 적음), 글자에 오타가 있거나, 알파벳이 추가/누락되었을 때, 이를 '맞은 단어겠지' 하고 교정하여 올바른 스펠링으로 바꾸어 읽지 마십시오.\n"
+                    "2. 반드시 종이에 적힌 **눈에 보이는 실제 철자 그대로** 타이핑해야 합니다. (예: 'polloute'라고 적혔으면 그대로 'polloute'로 읽을 것)\n"
+                    "3. 미응답인 경우 '(미응답)'으로 적으십시오.\n\n"
                     "반드시 아래 형식으로만 답변하세요. 다른 설명은 절대 금지합니다.\n"
                     "형식 예시:\n"
-                    "1: create\n"
-                    "3: opportunity\n"
-                    "11: observe\n"
-                    "21: society"
+                    "1: vacuum\n"
+                    "11: polloute\n"
+                    "21: soil"
                 ).format(target_numbers_str)
 
                 try:
@@ -239,8 +238,9 @@ if start_grading:
                                     is_correct = True
                                     reason = "정답"
                                 else:
+                                    # 🔥 철자 불일치(오타) 정확히 검출하여 오답 처리
                                     is_correct = False
-                                    reason = "철자 불일치/누락 (작성: '{}' / 정답: '{}')".format(
+                                    reason = "철자 오류/오기 (작성: '{}' / 정답: '{}')".format(
                                         raw_written, str(c_ans).strip()
                                     )
                         else:
