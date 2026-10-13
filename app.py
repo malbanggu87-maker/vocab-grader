@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (OCR 오인식 방지 및 교차 검증 모드)")
+st.title("📝 Grit English 채점실행 명령 (철자 완전 일치 엄격 검증 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -164,34 +164,30 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                # 💡 [핵심 패치]: 정답 리스트를 AI에게 함께 제공하여, OCR 오인식(argument를 arguement로 착각하는 현상)을 방지하고 정확한 판독 유도
-                answer_context_str = "\n".join(
-                    ["- {}번 정답: {}".format(k, v) for k, v in answer_dict.items()]
-                )
+                target_numbers_str = ", ".join(list(answer_dict.keys()))
 
                 system_role = (
-                    "당신은 대한민국 최고 수준의 냉정하고 철저한 영단어/문장 학원 수석 채점관입니다.\n"
-                    "이 시험 채점의 제1원칙은 '학생의 실력을 100% 객관적이고 가감 없이 측정하는 것'입니다.\n"
-                    "1. 학생이 실제로 정답을 올바르게 적었음에도 AI가 폰트나 필기체 형태를 오인식(예: 'argument'를 'arguement'로 잘못 착각)하여 오답 처리하는 일은 **절대 있어서는 안 되는 중대한 오작동**입니다. 정답과 일치하는 글자라면 정확히 정답으로 읽어내십시오.\n"
-                    "2. 반대로 학생이 스펠링을 틀렸거나 오타를 낸 경우(예: 'elementary'를 'elecmentary'로 쓴 것 등)에는 절대 자의적으로 보정하지 말고 엄격하게 오답으로 처리해야 합니다.\n"
-                    "3. 답란이 비어있는 공란은 무조건 '(미응답)'으로 처리하십시오."
+                    "당신은 대한민국 최고 수준의 냉정하고 철저한 영단어/문장 학원 수석 OCR 판독 머신입니다.\n"
+                    "이 작업의 목적은 학생의 손글씨를 티끌 하나 다르게 바꾸지 않고 원본 그대로 읽어내는 것입니다.\n"
+                    "1. 학생이 스펠링을 틀렸거나 오타를 낸 경우(예: 'variety'를 'verity'로, 'destination'을 'distination'으로, 'proverb'를 'preverb'로 쓴 것 등), "
+                    "절대로 올바른 정답 단어로 교정하거나 유추하여 출력하지 말고, **종이에 적힌 실제 알파벳 철자 그대로** 타이핑하십시오.\n"
+                    "2. 답란이 비어있는 공란은 무조건 '(미응답)'으로 처리하십시오.\n"
+                    "3. 취소선이 그어진 단어는 무시하고 새로 고쳐 쓴 최종 단어만 읽으십시오."
                 )
 
                 prompt = (
-                    "아래 [문항별 정답 리스트]를 참고하여, 지정된 문항 번호들에 해당하는 학생의 실제 답안을 시험지 사진에서 정확하게 판독하세요.\n\n"
-                    "📋 [문항별 정답 리스트]:\n{}\n\n"
+                    "첨부된 시험지 이미지에서 아래 지정된 문항 번호들에 해당하는 학생의 손글씨 답안을 찾으세요.\n\n"
                     "📌 [찾아야 할 문항 번호 목록]: {}\n\n"
-                    "🚨 [철저한 판독 원칙]:\n"
-                    "1. **오인식 방지**: 학생이 올바르게 적은 단어를 AI의 시각적 착각으로 틀리게 읽는 오인식이 발생하지 않도록 손글씨의 형태를 정밀하게 분석하십시오.\n"
-                    "2. **오타 자체 보정 절대 금지**: 명백한 철자 오류/오타는 절대로 정답으로 교정해주지 말고 적힌 그대로 판독하십시오.\n"
-                    "3. **공란(미응답) 엄격 적발**: 빈칸은 무조건 '(미응답)'으로 적으십시오.\n"
-                    "4. **취소선 무시**: 줄이 그어진 단어는 무시하고 새로 고쳐 쓴 최종 단어만 읽으십시오.\n\n"
+                    "🚨 [엄격한 필사 원칙]:\n"
+                    "- 오타('verity', 'distination', 'preverb' 등)를 절대 고쳐주지 말고 보이는 그대로 적으십시오.\n"
+                    "- 공란은 '(미응답)'으로 적으십시오.\n\n"
                     "반드시 아래 형식으로만 답변하세요. 다른 설명이나 사족은 절대 금지합니다.\n"
                     "형식 예시:\n"
-                    "1: goverment\n"
-                    "3: (미응답)\n"
-                    "18: argument"
-                ).format(answer_context_str, ", ".join(list(answer_dict.keys())))
+                    "1: degree\n"
+                    "4: verity\n"
+                    "15: distination\n"
+                    "26: preverb"
+                ).format(target_numbers_str)
 
                 try:
                     chat_messages = [
@@ -246,11 +242,7 @@ if start_grading:
                                 student_word = normalize_text(raw_written)
                                 correct_word = normalize_text(str(c_ans))
                                 
-                                # 💡 [오인식 방지 보정 로직]: 'argument'와 'arguement' 같이 AI가 흔히 착각하는 미세 오인식 패턴을 정밀 교차 검증
-                                if student_word != correct_word:
-                                    if student_word.replace("egu", "gu") == correct_word or student_word == correct_word.replace("gu", "egu"):
-                                        student_word = correct_word
-
+                                # 💡 [철저한 오타 검증]: AI가 억지로 교정하려 해도 파이썬 레벨에서 100% 글자 일치 여부만 따져서 오답 처리
                                 if not is_english_text(student_word):
                                     is_correct = False
                                     reason = "영단어 미작성"
