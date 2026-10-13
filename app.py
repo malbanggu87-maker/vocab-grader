@@ -286,3 +286,40 @@ if start_grading:
                     total_q_count = len(records)
                     total_correct = sum(1 for r in records if r["정오답"])
                     wrong_count = total_q_count - total_correct
+
+                    wrong_details = [
+                        {
+                            "문항 번호": r["문항 번호"],
+                            "학생 작성 답안": r["학생 작성 답안"],
+                            "교재 정답": r["교재 정답"],
+                            "사유": r["사유"],
+                        }
+                        for r in records
+                        if not r["정오답"]
+                    ]
+
+                    st.info("결과: **{} / {}점** (틀린 문항: {}개)".format(
+                        total_correct, total_q_count, wrong_count
+                    ))
+
+                    if wrong_details:
+                        df_wrong = pd.DataFrame(wrong_details)
+                        st.dataframe(df_wrong, use_container_width=True, hide_index=True)
+
+                        csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
+                        safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
+                        st.download_button(
+                            label="📥 `{}` 오답노트 다운로드 (CSV)".format(photo.name),
+                            data=csv_data,
+                            file_name="오답노트_{}.csv".format(safe_filename),
+                            mime="text/csv",
+                            key="dl_{}".format(idx),
+                        )
+                    else:
+                        st.balloons()
+                        st.success("🎉 모든 문항을 맞혔습니다!")
+
+                except Exception as api_err:
+                    st.error("API 호출 또는 채점 처리 중 오류 발생: {}".format(api_err))
+
+                st.markdown("---")
