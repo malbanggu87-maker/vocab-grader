@@ -187,7 +187,7 @@ if start_grading:
                 system_role = (
                     "당신은 정밀 문자 판독(OCR) 전용 시스템입니다.\n"
                     "주어진 영역별 이미지에서 학생이 직접 쓴 손글씨 알파벳을 철자 하나 다르게 바꾸지 않고 있는 그대로 타이핑하십시오.\n"
-                    "1. 단어의 자의적 보정/유추/자동 교정은 철저히 금지됩니다. (예: 'hol'을 'hole'로, 'attribut'를 'attribute'로, 'verity'를 'variety'로, 'sentense'를 'sentence'로 고쳐 쓰지 말고 눈에 보이는 알파벳 그대로 적으시오)\n"
+                    "1. 단어의 자의적 보정/유추/자동 교정은 철저히 금지됩니다.\n"
                     "2. 답란에 아무것도 쓰여있지 않거나 비어있는 공란은 무조건 '(미응답)'으로 출력하십시오.\n"
                     "3. 취소선이 그어진 단어는 무시하고, 새로 고쳐 쓴 최종 단어만 필사하십시오."
                 )
@@ -214,3 +214,75 @@ if start_grading:
                                     "image_url": {
                                         "url": "data:image/jpeg;base64,{}".format(left_b64),
                                         "detail": "high"
+                                    }
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:image/jpeg;base64,{}".format(right_b64),
+                                        "detail": "high"
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+
+                    response = client.chat.completions.create(
+                        model=selected_model,
+                        temperature=0.0,
+                        messages=chat_messages
+                    )
+
+                    response_text = response.choices[0].message.content
+
+                    gpt_parsed = {}
+                    for line in response_text.splitlines():
+                        line = line.strip()
+                        match = re.search(r"^(\d+)\s*[:\.\-]?\s*(.*)$", line)
+                        if match:
+                            raw_num = match.group(1)
+                            q_val = match.group(2).strip()
+                            norm_num = normalize_q_num(raw_num)
+                            if norm_num and q_val:
+                                gpt_parsed[norm_num] = q_val
+
+                    records = []
+                    for q_num_norm, c_ans in answer_dict.items():
+                        if q_num_norm in gpt_parsed:
+                            raw_written = gpt_parsed[q_num_norm]
+
+                            if raw_written in ["(미응답)", "미응답", "(공란)", "공란", "none", "null", ""]:
+                                student_word = "(미응답)"
+                                is_correct = False
+                                reason = "미응답 (공란)"
+                            else:
+                                student_word = normalize_text(raw_written)
+                                correct_word = normalize_text(str(c_ans))
+
+                                if not is_english_text(student_word):
+                                    is_correct = False
+                                    reason = "영단어 미작성"
+                                elif student_word == correct_word:
+                                    is_correct = True
+                                    reason = "정답"
+                                else:
+                                    is_correct = False
+                                    reason = "철자 오류/오기 (작성: '{}' / 정답: '{}')".format(
+                                        raw_written, str(c_ans).strip()
+                                    )
+                        else:
+                            student_word = "(미응답)"
+                            is_correct = False
+                            reason = "시험지에서 해당 문항 번호를 찾지 못함 (미인식/미응답)"
+
+                        records.append({
+                            "문항 번호": q_num_norm,
+                            "학생 작성 답안": student_word,
+                            "교재 정답": str(c_ans).strip(),
+                            "정오답": is_correct,
+                            "사유": reason,
+                        })
+
+                    total_q_count = len(records)
+                    total_correct = sum(1 for r in records if r["정오답"])
+                    wrong_count = total_q_count - total_correct
