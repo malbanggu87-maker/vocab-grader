@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (안정형 순수 OCR + 철자 검증 모드)")
+st.title("📝 Grit English 채점실행 명령 (문항 번호 지목형 OCR 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -164,19 +164,24 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                # 💡 [핵심]: 정답을 주지 않고, 오직 각 문항 번호에 적힌 텍스트를 정직하게 읽어오게 함
+                # 💡 [핵심 해결책]: 엑셀에 존재하는 문항 번호 목록을 AI에게 직접 주어 해당 번호의 글자를 빠짐없이 읽어오게 강제함
+                target_numbers_str = ", ".join(list(answer_dict.keys()))
+
                 prompt = (
-                    "당신은 영단어 및 문장 시험지의 손글씨를 그대로 읽어내는 순수 OCR 리더입니다.\n"
-                    "시험지 사진의 1번부터 마지막 번호(25번 등)까지 각 문항 번호 옆에 적힌 학생의 손글씨 텍스트를 보이는 그대로 빠짐없이 읽어서 적으세요.\n"
-                    "정답이 무엇인지 유추하거나 교정하지 말고, 종이에 적힌 글자 모양 그대로 출력하세요.\n\n"
+                    "당신은 영단어 및 문장 시험지의 손글씨를 정밀하게 읽어내는 OCR 리더입니다.\n"
+                    "첨부된 시험지 이미지에서 아래 지정된 문항 번호들에 해당하는 학생의 손글씨 답안을 빠짐없이 찾아 읽으세요.\n\n"
+                    "📌 [찾아야 할 문항 번호 목록]: {}\n\n"
+                    "⚠️ [주의사항]:\n"
+                    "- 2열 구조(좌측 1~10번, 우측 11~20번)와 하단의 서술형/문장형(21~25번)을 모두 빠짐없이 확인하세요.\n"
+                    "- 정답이 무엇일지 유추하거나 교정하지 말고, 시험지에 적힌 글자 그대로 읽으세요.\n"
+                    "- 미응답인 경우 '(미응답)'으로 적으세요.\n\n"
                     "반드시 아래 형식으로만 답변하세요. 다른 설명은 절대 금지합니다.\n"
-                    "형식:\n"
+                    "형식 예시:\n"
                     "1: create\n"
                     "3: opportunity\n"
-                    "21: society a society\n"
-                    "24: changing society\n"
-                    "미응답인 경우: (미응답)"
-                )
+                    "11: observe\n"
+                    "21: society"
+                ).format(target_numbers_str)
 
                 try:
                     chat_messages = [
@@ -203,7 +208,6 @@ if start_grading:
 
                     response_text = response.choices[0].message.content
                     
-                    # 💡 유연한 파싱: AI가 어떤 형태로 출력을 하든 번호와 텍스트를 확실하게 추출
                     gpt_parsed = {}
                     for line in response_text.splitlines():
                         line = line.strip()
@@ -228,7 +232,6 @@ if start_grading:
                                 student_word = normalize_text(raw_written)
                                 correct_word = normalize_text(str(c_ans))
                                 
-                                # 💡 채점 판정: 100% 파이썬 코드가 엄격한 텍스트 대조로 수행
                                 if not is_english_text(student_word):
                                     is_correct = False
                                     reason = "영단어 미작성"
@@ -236,7 +239,6 @@ if start_grading:
                                     is_correct = True
                                     reason = "정답"
                                 else:
-                                    # 단어/문장 철자 불일치 엄격 판정
                                     is_correct = False
                                     reason = "철자 불일치/누락 (작성: '{}' / 정답: '{}')".format(
                                         raw_written, str(c_ans).strip()
