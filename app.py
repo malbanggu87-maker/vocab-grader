@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (정답 격리형 순수 OCR 모드)")
+st.title("📝 Grit English 채점실행 명령 (강력 파싱 및 엄격 채점 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -174,17 +174,25 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                # 💡 핵심: AI에게 정답을 절대로 주지 않음. 오직 눈에 보이는 글자를 알파벳 단위로 쪼개서 읽어오게만 지시
+                answer_context_str = "\n".join(
+                    ["- {}번 정답 기준: {}".format(k, v) for k, v in answer_dict.items()]
+                )
+
+                # 프롬프트: 정답을 주되, 자체보정(임의 정답처리)을 강력하게 금지시킴
                 prompt = (
-                    "당신은 영단어 시험지 전용 순수 OCR 스크립트입니다.\n"
-                    "시험지 이미지의 각 문항 번호 위치에 **학생이 손글씨로 적은 알파벳 철자를 하이픈(-)으로 나누어 보이는 그대로** 적으세요.\n"
-                    "정답이 무엇인지 유추하거나 교정하려고 들지 말고, 이미지에 적힌 글자 모양 그대로 한 자씩 추출하세요.\n\n"
-                    "반드시 아래 형식의 텍스트로만 답변하세요. 다른 설명이나 인사말은 일체 금지합니다.\n"
+                    "당신은 영단어 시험지의 학생 손글씨를 한 글자씩 그대로 읽어내는 엄격한 OCR 검증관입니다.\n\n"
+                    "📋 [참고용 해당 시험지 문항별 정답 리스트]:\n{}\n\n"
+                    "🚨 [필독 채점 규칙 - 자체보정 절대 금지]:\n"
+                    "1. 학생이 정답 단어의 스펠링을 틀리게 적었거나(예: 'essential'을 'issiontial'로 적음), 글자가 누락되었을 때, 이를 '의도한 정답이겠지' 하고 교정하여 적지 마십시오.\n"
+                    "2. 반드시 학생이 종이에 적은 **눈에 보이는 실제 알파벳 철자 그대로** 하이픈(-)으로 나누어 적으십시오. 철자가 틀렸다면 틀린 그 모양 그대로 적어야 합니다.\n"
+                    "3. 공란이거나 미응답인 경우 '(미응답)'으로 적으십시오.\n\n"
+                    "🚨 [출력 형식 준수]:\n"
+                    "반드시 아래 형식으로만 답변하세요.\n"
                     "형식:\n"
                     "1: r-e-q-u-i-r-e\n"
                     "3: i-s-s-i-o-n-t-i-a-l\n"
                     "15: (미응답)"
-                )
+                ).format(answer_context_str)
 
                 try:
                     chat_messages = [
@@ -211,14 +219,20 @@ if start_grading:
 
                     response_text = response.choices[0].message.content
                     
+                    # 💡 [강력한 파싱 로직]: 챗지피티가 어떤 형식이든 숫자가 포함된 줄을 지능적으로 찾아내도록 개선
                     gpt_parsed = {}
                     for line in response_text.splitlines():
                         line = line.strip()
-                        match = re.search(r"^(\d+)\s*[:\.]\s*(.*)$", line)
+                        # 숫자가 맨 앞에 오거나 문장 내에 번호와 내용이 포함된 형태를 유연하게 추출
+                        match = re.search(r"(\d+)\s*[:\.\-]?\s*(.*)", line)
                         if match:
-                            q_num = normalize_q_num(match.group(1))
+                            raw_num = match.group(1)
                             q_val = match.group(2).strip()
-                            gpt_parsed[q_num] = q_val
+                            # 불필요한 기호나 괄호 제거
+                            q_val = re.sub(r"^[\s:\.\-]+", "", q_val).strip()
+                            norm_num = normalize_q_num(raw_num)
+                            if norm_num and q_val:
+                                gpt_parsed[norm_num] = q_val
 
                     records = []
                     for q_num_norm, c_ans in answer_dict.items():
@@ -278,23 +292,4 @@ if start_grading:
                     ))
 
                     if wrong_details:
-                        df_wrong = pd.DataFrame(wrong_details)
-                        st.dataframe(df_wrong, use_container_width=True, hide_index=True)
-
-                        csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
-                        safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
-                        st.download_button(
-                            label="📥 `{}` 오답노트 다운로드 (CSV)".format(photo.name),
-                            data=csv_data,
-                            file_name="오답노트_{}.csv".format(safe_filename),
-                            mime="text/csv",
-                            key="dl_{}".format(idx),
-                        )
-                    else:
-                        st.balloons()
-                        st.success("🎉 모든 문항을 맞혔습니다!")
-
-                except Exception as api_err:
-                    st.error("API 호출 또는 채점 처리 중 오류 발생: {}".format(api_err))
-
-                st.markdown("---")
+                        df_wrong = pd.
