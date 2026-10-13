@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (절대 불일치 판정 모드)")
+st.title("📝 Grit English 채점실행 명령 (데스매치 엄격 판정 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -159,19 +159,19 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                # 교재 정답 리스트를 프롬프트에 포함하여 정오표 판정 지시
                 answer_context_str = "\n".join(
                     ["- {}번 정답: {}".format(k, v) for k, v in answer_dict.items()]
                 )
 
+                # AI의 자체 보정을 강제로 짓밟기 위한 데스매치 수준의 초엄격 프롬프트
                 prompt = (
-                    "당신은 매우 엄격한 영단어 시험지 검증 로봇입니다.\n"
-                    "아래에 제공된 [문항별 정답]과 시험지 이미지에 적힌 [학생의 손글씨]를 1대1로 정밀 비교하세요.\n\n"
+                    "당신은 피도 눈물도 없는 극도로 잔인하고 엄격한 AI 채점관입니다.\n"
+                    "아래 제공되는 [문항별 정답]과 시험지 이미지에 적힌 [학생의 손글씨]를 대조하세요.\n\n"
                     "📋 [문항별 정답 리스트]:\n{}\n\n"
-                    "🚨 [초엄격 채점 절대 규칙 - 자체 보정 절대 금지]:\n"
-                    "1. 학생이 스펠링을 조금이라도 틀렸거나(예: 'essential'을 'issiontial'로 적음), 철자가 누락되었거나, 다른 단어를 적었으면 **무조건 '오답'**으로 판정해야 합니다.\n"
-                    "2. '학생이 비슷하게 썼으니 맞게 해줘야지'라는 식의 자체 보정이나 유연한 해석을 하면 시험 채점이 망가지므로 절대 금지합니다.\n"
-                    "3. 공란이거나 미응답인 경우에도 '오답'입니다.\n\n"
+                    "🚨 [데스매치급 채점 철칙 - 위반 시 시스템 중대 오류 발생 간주]:\n"
+                    "1. 학생이 정답 스펠링과 비교하여 알파벳 하나라도 틀리게 적었거나, 누락했거나, 순서가 바뀌었으면 **예외 없이 무조건 '오답'**으로 판정하십시오.\n"
+                    "2. 3번 문항의 경우, 학생이 'essential'을 적으려다 스펠링을 틀렸거나 모양이 애매하더라도, 완벽하게 정확한 철자가 아니라면 **무조건 '오답'**입니다. 절대 '정답'으로 봐주지 마십시오.\n"
+                    "3. 조금이라도 의심스러우면 무조건 '오답' 처리하는 것이 이 채점기의 원칙입니다.\n\n"
                     "🚨 [출력 형식 절대 준수]:\n"
                     "반드시 아래 형식의 텍스트로만 답변하세요. 다른 설명은 일체 금지합니다.\n"
                     "형식: [문항번호]: [정답 또는 오답]\n"
@@ -220,10 +220,9 @@ if start_grading:
                         if q_num_norm in gpt_results:
                             verdict = gpt_results[q_num_norm]
                             
-                            # AI가 '정답'이라고 명시한 경우에만 정답 처리, 그 외(오답, 미응답 등)는 모두 철저히 오답 처리
                             if "정답" in verdict and "오답" not in verdict:
                                 is_correct = True
-                                student_word = normalize_text(str(c_ans)) # 일치하므로 정답 처리
+                                student_word = normalize_text(str(c_ans))
                                 reason = "정답"
                             else:
                                 is_correct = False
