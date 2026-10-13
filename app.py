@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (데스매치 엄격 판정 모드)")
+st.title("📝 Grit English 채점실행 명령 (정답 격리형 순수 OCR 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -88,13 +88,28 @@ def compress_and_encode_image(uploaded_file, max_size=3840):
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
+def clean_spelled_letters(raw_letters: str) -> str:
+    """하이픈과 특수문자를 제거하고 소문자 알파벳만 추출"""
+    if not raw_letters:
+        return ""
+    text = unicodedata.normalize("NFC", str(raw_letters)).lower().strip()
+    text = re.sub(r"[-_.,]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def normalize_text(text: str) -> str:
+    """정답지 영단어/문장 정규화"""
     if not text:
         return ""
     text = unicodedata.normalize("NFC", str(text)).lower().strip()
     text = re.sub(r"[^a-z0-9\s]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def is_english_text(text: str) -> bool:
+    return bool(re.search(r"[a-zA-Z]", text))
 
 
 def load_answer_dict_from_file(ans_file) -> dict:
@@ -159,27 +174,17 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                answer_context_str = "\n".join(
-                    ["- {}번 정답: {}".format(k, v) for k, v in answer_dict.items()]
-                )
-
-                # AI의 자체 보정을 강제로 짓밟기 위한 데스매치 수준의 초엄격 프롬프트
+                # 💡 핵심: AI에게 정답을 절대로 주지 않음. 오직 눈에 보이는 글자를 알파벳 단위로 쪼개서 읽어오게만 지시
                 prompt = (
-                    "당신은 피도 눈물도 없는 극도로 잔인하고 엄격한 AI 채점관입니다.\n"
-                    "아래 제공되는 [문항별 정답]과 시험지 이미지에 적힌 [학생의 손글씨]를 대조하세요.\n\n"
-                    "📋 [문항별 정답 리스트]:\n{}\n\n"
-                    "🚨 [데스매치급 채점 철칙 - 위반 시 시스템 중대 오류 발생 간주]:\n"
-                    "1. 학생이 정답 스펠링과 비교하여 알파벳 하나라도 틀리게 적었거나, 누락했거나, 순서가 바뀌었으면 **예외 없이 무조건 '오답'**으로 판정하십시오.\n"
-                    "2. 3번 문항의 경우, 학생이 'essential'을 적으려다 스펠링을 틀렸거나 모양이 애매하더라도, 완벽하게 정확한 철자가 아니라면 **무조건 '오답'**입니다. 절대 '정답'으로 봐주지 마십시오.\n"
-                    "3. 조금이라도 의심스러우면 무조건 '오답' 처리하는 것이 이 채점기의 원칙입니다.\n\n"
-                    "🚨 [출력 형식 절대 준수]:\n"
-                    "반드시 아래 형식의 텍스트로만 답변하세요. 다른 설명은 일체 금지합니다.\n"
-                    "형식: [문항번호]: [정답 또는 오답]\n"
-                    "예시:\n"
-                    "1: 정답\n"
-                    "3: 오답\n"
-                    "15: 오답"
-                ).format(answer_context_str)
+                    "당신은 영단어 시험지 전용 순수 OCR 스크립트입니다.\n"
+                    "시험지 이미지의 각 문항 번호 위치에 **학생이 손글씨로 적은 알파벳 철자를 하이픈(-)으로 나누어 보이는 그대로** 적으세요.\n"
+                    "정답이 무엇인지 유추하거나 교정하려고 들지 말고, 이미지에 적힌 글자 모양 그대로 한 자씩 추출하세요.\n\n"
+                    "반드시 아래 형식의 텍스트로만 답변하세요. 다른 설명이나 인사말은 일체 금지합니다.\n"
+                    "형식:\n"
+                    "1: r-e-q-u-i-r-e\n"
+                    "3: i-s-s-i-o-n-t-i-a-l\n"
+                    "15: (미응답)"
+                )
 
                 try:
                     chat_messages = [
@@ -206,32 +211,44 @@ if start_grading:
 
                     response_text = response.choices[0].message.content
                     
-                    gpt_results = {}
+                    gpt_parsed = {}
                     for line in response_text.splitlines():
                         line = line.strip()
                         match = re.search(r"^(\d+)\s*[:\.]\s*(.*)$", line)
                         if match:
                             q_num = normalize_q_num(match.group(1))
-                            verdict = match.group(2).strip()
-                            gpt_results[q_num] = verdict
+                            q_val = match.group(2).strip()
+                            gpt_parsed[q_num] = q_val
 
                     records = []
                     for q_num_norm, c_ans in answer_dict.items():
-                        if q_num_norm in gpt_results:
-                            verdict = gpt_results[q_num_norm]
-                            
-                            if "정답" in verdict and "오답" not in verdict:
-                                is_correct = True
-                                student_word = normalize_text(str(c_ans))
-                                reason = "정답"
-                            else:
+                        if q_num_norm in gpt_parsed:
+                            raw_spelled = gpt_parsed[q_num_norm]
+
+                            if raw_spelled in ["(미응답)", "미응답", "(공란)", "공란", "none", "null", ""]:
+                                student_word = "(미응답)"
                                 is_correct = False
-                                student_word = "(오기 또는 오답)"
-                                reason = "철자 불일치 / 오답"
+                                reason = "미응답 (공란)"
+                            else:
+                                student_word = clean_spelled_letters(raw_spelled)
+                                correct_word = normalize_text(str(c_ans))
+                                
+                                # 💡 채점 판정은 100% 파이썬 코드가 엄격한 문자열 일치 검사로만 수행
+                                if not is_english_text(student_word):
+                                    is_correct = False
+                                    reason = "영단어 미작성"
+                                elif student_word == correct_word:
+                                    is_correct = True
+                                    reason = "정답"
+                                else:
+                                    is_correct = False
+                                    reason = "철자 불일치/누락 (작성: '{}' / 정답: '{}')".format(
+                                        student_word, correct_word
+                                    )
                         else:
-                            is_correct = False
                             student_word = "(미응답)"
-                            reason = "시험지에서 해당 문항 번호를 찾지 못함"
+                            is_correct = False
+                            reason = "시험지에서 해당 문항 번호를 찾지 못함 (미인식/미응답)"
 
                         records.append({
                             "문항 번호": q_num_norm,
