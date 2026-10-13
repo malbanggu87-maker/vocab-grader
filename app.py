@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (2단 칼럼 + 20번대 정밀 크롭 병행 엔진)")
+st.title("📝 Grit English 채점실행 명령 (1번/11번/20번 경계면 정밀 보정 엔진)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -83,43 +83,53 @@ def prepare_image(uploaded_file):
     return image
 
 
-def crop_columns(image: Image.Image):
-    """시험지 이미지를 좌측 칼럼(1~18번)과 우측 칼럼(19~36번)으로 2단 분할"""
+def crop_middle_school_box(image: Image.Image, q_num: int):
+    """
+    중학 영단어 실력편 양식 기준 정밀 크롭 (1번, 11번, 20번 경계면 Y축 확장 보정)
+    """
     width, height = image.size
-    top = int(height * 0.17)
-    bottom = int(height * 0.96)
-    mid_x = int(width * 0.50)
-
-    left_col = image.crop((0, top, mid_x, bottom))
-    right_col = image.crop((mid_x, top, width, bottom))
-    return left_col, right_col
-
-
-def crop_single_box(image: Image.Image, q_num: int):
-    """특정 문항 번호만 콕 집어서 정밀 크롭 (20번, 21번 등 중복 단어 대응용)"""
-    width, height = image.size
-    top_margin = height * 0.178
-    bottom_margin = height * 0.962
-    content_height = bottom_margin - top_margin
-    row_height = content_height / 18.0
-
-    if 1 <= q_num <= 18:
-        col_idx = q_num - 1
-        x1 = int(width * 0.27)
-        x2 = int(width * 0.51)
-        y1 = int(top_margin + (col_idx * row_height))
-        y2 = int(top_margin + ((col_idx + 1) * row_height))
-    elif 19 <= q_num <= 36:
-        col_idx = q_num - 19
-        x1 = int(width * 0.73)
-        x2 = int(width * 0.99)
-        y1 = int(top_margin + (col_idx * row_height))
-        y2 = int(top_margin + ((col_idx + 1) * row_height))
+    
+    top_margin = height * 0.155
+    mid_table_y = height * 0.525
+    
+    if 1 <= q_num <= 10:
+        row_h = (mid_table_y - top_margin) / 10.0
+        idx = q_num - 1
+        x1, x2 = int(width * 0.28), int(width * 0.49)
+        y1 = int(top_margin + (idx * row_h))
+        y2 = int(top_margin + ((idx + 1) * row_h))
+        
+        # 💡 [1번 문항 최상단 보정]
+        if q_num == 1:
+            y1 = int(top_margin - (row_h * 0.15))
+            
+    elif 11 <= q_num <= 20:
+        row_h = (mid_table_y - top_margin) / 10.0
+        idx = q_num - 11
+        x1, x2 = int(width * 0.74), int(width * 0.98)
+        y1 = int(top_margin + (idx * row_h))
+        y2 = int(top_margin + ((idx + 1) * row_h))
+        
+        # 💡 [11번 문항 우측 칼럼 시작점 보정]
+        if q_num == 11:
+            y1 = int(top_margin - (row_h * 0.15))
+        # 💡 [20번 문항 최하단 보정]
+        if q_num == 20:
+            y2 = int(mid_table_y + (row_h * 0.15))
+            
+    elif 21 <= q_num <= 25:
+        bot_top = height * 0.54
+        bot_bot = height * 0.95
+        sub_h = (bot_bot - bot_top) / 5.0
+        idx = q_num - 21
+        x1, x2 = int(width * 0.22), int(width * 0.98)
+        y1 = int(bot_top + (idx * sub_h))
+        y2 = int(bot_top + ((idx + 1) * sub_h))
     else:
         return image
 
-    padding_x = int((x2 - x1) * 0.04)
-    padding_y = int((y2 - y1) * 0.15)
+    padding_x = int((x2 - x1) * 0.03)
+    padding_y = int((y2 - y1) * 0.18)
     
     crop_box = (
         max(0, x1 - padding_x),
@@ -180,7 +190,7 @@ if answer_files:
 
 st.markdown("---")
 
-start_grading = st.button("🚀 채점 시작 (2단 + 20, 21번 정밀 보정 엔진)", type="primary", use_container_width=True)
+start_grading = st.button("🚀 채점 시작 (1, 11, 20번 경계 보정 엔진)", type="primary", use_container_width=True)
 
 if start_grading:
     if not api_key or not answer_files or not student_photos:
@@ -210,173 +220,125 @@ if start_grading:
                     continue
 
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
-                image = prepare_image(photo)
-                left_col_img, right_col_img = crop_columns(image)
-
-                left_b64 = image_to_base64(left_col_img)
-                right_b64 = image_to_base64(right_col_img)
-
-                target_numbers = sorted([int(k) for k in answer_dict.keys() if k.isdigit()])
-                target_numbers_str = ", ".join([str(n) for n in target_numbers])
+                full_image = prepare_image(photo)
 
                 system_role = (
-                    "당신은 정밀 문자 판독(OCR) 전용 시스템입니다.\n"
-                    "제공된 좌측/우측 칼럼 이미지에서 지정된 문항 번호들에 해당하는 학생의 손글씨 답안을 찾아서 정확히 읽어내십시오.\n"
-                    "1. 답란이 비어있거나 내용이 없는 경우 반드시 '(미응답)'으로 출력하십시오.\n"
-                    "2. 단어의 자의적 보정/유추/자동 교정은 철저히 금지됩니다. (스펠링이 틀렸어도 보이는 그대로 읽을 것)\n"
-                    "3. 취소선이 그어진 단어는 무시하고 새로 고쳐 쓴 최종 단어만 읽으십시오."
+                    "당신은 중학 영단어 실력편 시험지 전용 정밀 문자 판독(OCR) 시스템입니다.\n"
+                    "주어진 단 하나의 문항 영역 이미지에서 학생이 직접 쓴 손글씨 알파벳을 철자 하나 다르게 바꾸지 않고 있는 그대로 타이핑하십시오.\n"
+                    "1. 자의적 보정/유추/자동 교정은 철저히 금지됩니다. (필기체가 다소 흘려져 있어도 보이는 알파벳 그대로 읽을 것)\n"
+                    "2. 답란이 비어있거나 공란인 경우 무조건 '(미응답)'으로 출력하십시오.\n"
+                    "3. 취소선이나 기호가 섞여 있는 경우, 이를 제외하고 새로 고쳐 쓴 최종 알파벳 단어만 읽으십시오."
                 )
 
-                prompt = (
-                    "첫 번째 이미지(좌측 칼럼: 1~18번 영역)와 두 번째 이미지(우측 칼럼: 19~36번 영역)를 보고, "
-                    "아래 지정된 문항 번호들에 해당하는 학생의 손글씨 답안을 빠짐없이 읽어내세요.\n\n"
-                    "📌 [찾아야 할 문항 번호 목록]: {}\n\n"
-                    "반드시 아래 형식으로만 출력하세요. 다른 설명은 절대 금지합니다.\n"
-                    "형식 예시:\n"
-                    "1: mentor\n"
-                    "20: ruin\n"
-                    "21: ruin"
-                ).format(target_numbers_str)
+                records = []
+                for q_num_norm, c_ans in answer_dict.items():
+                    if not q_num_norm.isdigit():
+                        continue
+                    
+                    q_int = int(q_num_norm)
+                    cropped_img = crop_middle_school_box(full_image, q_int)
+                    img_b64 = image_to_base64(cropped_img)
 
-                try:
-                    chat_messages = [
-                        {"role": "system", "content": system_role},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": "data:image/jpeg;base64,{}".format(left_b64),
-                                        "detail": "high"
+                    prompt = (
+                        "이 이미지는 중학 영단어 실력편 시험지의 {}번 문항 영역입니다.\n"
+                        "여기에 적힌 학생의 손글씨 답안만 읽어서 출력하세요.\n"
+                        "다른 설명 없이 오직 적힌 단어/문장만 출력하세요. (공란인 경우 '(미응답)' 출력)"
+                    ).format(q_num_norm)
+
+                    try:
+                        chat_messages = [
+                            {"role": "system", "content": system_role},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": prompt},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": "data:image/jpeg;base64,{}".format(img_b64),
+                                            "detail": "high"
+                                        }
                                     }
-                                },
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": "data:image/jpeg;base64,{}".format(right_b64),
-                                        "detail": "high"
-                                    }
-                                }
-                            ]
-                        }
-                    ]
+                                ]
+                            }
+                        ]
 
-                    response = client.chat.completions.create(
-                        model=selected_model,
-                        temperature=0.0,
-                        messages=chat_messages
-                    )
+                        response = client.chat.completions.create(
+                            model=selected_model,
+                            temperature=0.0,
+                            messages=chat_messages
+                        )
 
-                    response_text = response.choices[0].message.content
+                        raw_written = response.choices[0].message.content.strip()
+                        raw_written = raw_written.splitlines()[0].strip()
 
-                    gpt_parsed = {}
-                    for line in response_text.splitlines():
-                        line = line.strip()
-                        match = re.search(r"^(\d+)\s*[:\.\-]?\s*(.*)$", line)
-                        if match:
-                            raw_num = match.group(1)
-                            q_val = match.group(2).strip()
-                            norm_num = normalize_q_num(raw_num)
-                            if norm_num and q_val:
-                                gpt_parsed[norm_num] = q_val
-
-                    # 💡 [20번, 21번 문항 개별 크롭 2차 검증 로직]: 중복 단어 영역 정밀 확인
-                    for target_q in [20, 21]:
-                        q_str = str(target_q)
-                        if q_str in answer_dict:
-                            try:
-                                cropped_box = crop_single_box(image, target_q)
-                                b64_box = image_to_base64(cropped_box)
-                                res_box = client.chat.completions.create(
-                                    model=selected_model,
-                                    temperature=0.0,
-                                    messages=[
-                                        {"role": "system", "content": "이 이미지는 시험지 {}번 문항입니다. 여기에 적힌 손글씨 답안만 오직 그대로 출력하세요. 비어있으면 (미응답) 출력.".format(target_q)},
-                                        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,{}".format(b64_box), "detail": "high"}}]}
-                                    ]
-                                )
-                                val_box = res_box.choices[0].message.content.strip().splitlines()[0]
-                                if val_box:
-                                    gpt_parsed[q_str] = val_box
-                            except Exception:
-                                pass
-
-                    records = []
-                    for q_num_norm, c_ans in answer_dict.items():
-                        if q_num_norm in gpt_parsed:
-                            raw_written = gpt_parsed[q_num_norm]
-
-                            if raw_written in ["(미응답)", "미응답", "(공란)", "공란", "none", "null", ""]:
-                                student_word = "(미응답)"
-                                is_correct = False
-                                reason = "미응답 (공란)"
-                            else:
-                                student_word = normalize_text(raw_written)
-                                correct_word = normalize_text(str(c_ans))
-
-                                if not is_english_text(student_word):
-                                    is_correct = False
-                                    reason = "영단어 미작성"
-                                elif student_word == correct_word:
-                                    is_correct = True
-                                    reason = "정답"
-                                else:
-                                    is_correct = False
-                                    reason = "철자 오류/오기 (작성: '{}' / 정답: '{}')".format(
-                                        raw_written, str(c_ans).strip()
-                                    )
-                        else:
+                        if raw_written in ["(미응답)", "미응답", "(공란)", "공란", "none", "null", ""]:
                             student_word = "(미응답)"
                             is_correct = False
-                            reason = "시험지에서 해당 문항 번호를 찾지 못함 (미인식/미응답)"
+                            reason = "미응답 (공란)"
+                        else:
+                            student_word = normalize_text(raw_written)
+                            correct_word = normalize_text(str(c_ans))
 
-                        records.append({
-                            "문항 번호": q_num_norm,
-                            "학생 작성 답안": student_word,
-                            "교재 정답": str(c_ans).strip(),
-                            "정오답": is_correct,
-                            "사유": reason,
-                        })
+                            if not is_english_text(student_word):
+                                is_correct = False
+                                reason = "영단어 미작성"
+                            elif student_word == correct_word:
+                                is_correct = True
+                                reason = "정답"
+                            else:
+                                is_correct = False
+                                reason = "철자 오류/오기 (작성: '{}' / 정답: '{}')".format(
+                                    raw_written, str(c_ans).strip()
+                                )
 
-                    total_q_count = len(records)
-                    total_correct = sum(1 for r in records if r["정오답"])
-                    wrong_count = total_q_count - total_correct
+                    except Exception as item_err:
+                        student_word = "(판독 오류)"
+                        is_correct = False
+                        reason = "API 판독 오류: {}".format(item_err)
 
-                    wrong_details = [
-                        {
-                            "문항 번호": r["문항 번호"],
-                            "학생 작성 답안": r["학생 작성 답안"],
-                            "교재 정답": r["교재 정답"],
-                            "사유": r["사유"],
-                        }
-                        for r in records
-                        if not r["정오답"]
-                    ]
+                    records.append({
+                        "문항 번호": q_num_norm,
+                        "학생 작성 답안": student_word,
+                        "교재 정답": str(c_ans).strip(),
+                        "정오답": is_correct,
+                        "사유": reason,
+                    })
 
-                    st.info("결과: **{} / {}점** (틀린 문항: {}개)".format(
-                        total_correct, total_q_count, wrong_count
-                    ))
+                total_q_count = len(records)
+                total_correct = sum(1 for r in records if r["정오답"])
+                wrong_count = total_q_count - total_correct
 
-                    if wrong_details:
-                        df_wrong = pd.DataFrame(wrong_details)
-                        st.dataframe(df_wrong, use_container_width=True, hide_index=True)
+                wrong_details = [
+                    {
+                        "문항 번호": r["문항 번호"],
+                        "학생 작성 답안": r["학생 작성 답안"],
+                        "교재 정답": r["교재 정답"],
+                        "사유": r["사유"],
+                    }
+                    for r in records
+                    if not r["정오답"]
+                ]
 
-                        csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
-                        safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
-                        st.download_button(
-                            label="📥 `{}` 오답노트 다운로드 (CSV)".format(photo.name),
-                            data=csv_data,
-                            file_name="오답노트_{}.csv".format(safe_filename),
-                            mime="text/csv",
-                            key="dl_{}".format(idx),
-                        )
-                    else:
-                        st.balloons()
-                        st.success("🎉 모든 문항을 맞혔습니다!")
+                st.info("결과: **{} / {}점** (틀린 문항: {}개)".format(
+                    total_correct, total_q_count, wrong_count
+                ))
 
-                except Exception as api_err:
-                    st.error("API 호출 또는 채점 처리 중 오류 발생: {}".format(api_err))
+                if wrong_details:
+                    df_wrong = pd.DataFrame(wrong_details)
+                    st.dataframe(df_wrong, use_container_width=True, hide_index=True)
+
+                    csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
+                    safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
+                    st.download_button(
+                        label="📥 `{}` 오답노트 다운로드 (CSV)".format(photo.name),
+                        data=csv_data,
+                        file_name="오답노트_{}.csv".format(safe_filename),
+                        mime="text/csv",
+                        key="dl_{}".format(idx),
+                    )
+                else:
+                    st.balloons()
+                    st.success("🎉 모든 문항을 맞혔습니다!")
 
                 st.markdown("---")
