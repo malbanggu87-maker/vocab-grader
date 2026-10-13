@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (2단 영역 분할 & Strict OCR 모드)")
+st.title("📝 Grit English 채점실행 명령 (안정형 2단 칼럼 OCR 엔진)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -84,10 +84,10 @@ def prepare_image(uploaded_file):
 
 
 def crop_columns(image: Image.Image):
-    """시험지 이미지를 좌측 칼럼과 우측 칼럼으로 2단 분할"""
+    """시험지 이미지를 좌측 칼럼(1~18번)과 우측 칼럼(19~36번)으로 2단 분할"""
     width, height = image.size
-    top = int(height * 0.18)
-    bottom = int(height * 0.95)
+    top = int(height * 0.17)
+    bottom = int(height * 0.96)
     mid_x = int(width * 0.50)
 
     left_col = image.crop((0, top, mid_x, bottom))
@@ -145,7 +145,7 @@ if answer_files:
 
 st.markdown("---")
 
-start_grading = st.button("🚀 채점 시작 (전면 개편 엔진)", type="primary", use_container_width=True)
+start_grading = st.button("🚀 채점 시작 (안정형 2단 칼럼 엔진)", type="primary", use_container_width=True)
 
 if start_grading:
     if not api_key or not answer_files or not student_photos:
@@ -186,20 +186,21 @@ if start_grading:
 
                 system_role = (
                     "당신은 정밀 문자 판독(OCR) 전용 시스템입니다.\n"
-                    "주어진 영역별 이미지에서 학생이 직접 쓴 손글씨 알파벳을 철자 하나 다르게 바꾸지 않고 있는 그대로 타이핑하십시오.\n"
-                    "1. 단어의 자의적 보정/유추/자동 교정은 철저히 금지됩니다.\n"
-                    "2. 답란에 아무것도 쓰여있지 않거나 비어있는 공란은 무조건 '(미응답)'으로 출력하십시오.\n"
-                    "3. 취소선이 그어진 단어는 무시하고, 새로 고쳐 쓴 최종 단어만 필사하십시오."
+                    "제공된 좌측/우측 칼럼 이미지에서 지정된 문항 번호들에 해당하는 학생의 손글씨 답안을 찾아서 정확히 읽어내십시오.\n"
+                    "1. 단어의 자의적 보정/유추/자동 교정은 철저히 금지됩니다. (스펠링이 틀렸어도 보이는 그대로 읽을 것)\n"
+                    "2. 답란이 비어있거나 내용이 없는 경우 반드시 '(미응답)'으로 출력하십시오.\n"
+                    "3. 취소선이 그어진 단어는 무시하고 새로 고쳐 쓴 최종 단어만 읽으십시오."
                 )
 
                 prompt = (
-                    "두 개의 이미지(첫 번째: 좌측 문항 칼럼, 두 번째: 우측 문항 칼럼)에서 아래 문항 번호들에 해당되는 학생의 손글씨 답안을 읽으세요.\n\n"
-                    "📌 [판독해야 할 문항 번호 목록]: {}\n\n"
-                    "반드시 아래 형식으로만 출력하세요. 설명은 금지합니다.\n"
-                    "1: fill\n"
-                    "5: hol\n"
-                    "10: sentense\n"
-                    "18: opprove"
+                    "첫 번째 이미지(좌측 칼럼: 1~18번 영역)와 두 번째 이미지(우측 칼럼: 19~36번 영역)를 보고, "
+                    "아래 지정된 문항 번호들에 해당하는 학생의 손글씨 답안을 빠짐없이 읽어내세요.\n\n"
+                    "📌 [찾아야 할 문항 번호 목록]: {}\n\n"
+                    "반드시 아래 형식으로만 출력하세요. 다른 설명은 절대 금지합니다.\n"
+                    "형식 예시:\n"
+                    "1: Otherwise\n"
+                    "2: forbid\n"
+                    "19: decoration"
                 ).format(target_numbers_str)
 
                 try:
