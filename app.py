@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (OCR 강제 필사 모드)")
+st.title("📝 Grit English 채점실행 명령 (오타 예시 차단 판정 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -88,28 +88,13 @@ def compress_and_encode_image(uploaded_file, max_size=3840):
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
-def clean_spelled_letters(raw_letters: str) -> str:
-    """하이픈과 특수문자를 제거하고 소문자 알파벳만 추출"""
-    if not raw_letters:
-        return ""
-    text = unicodedata.normalize("NFC", str(raw_letters)).lower().strip()
-    text = re.sub(r"[-_.,]", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
 def normalize_text(text: str) -> str:
-    """정답지 영단어/문장 정규화"""
     if not text:
         return ""
     text = unicodedata.normalize("NFC", str(text)).lower().strip()
     text = re.sub(r"[^a-z0-9\s]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
-
-
-def is_english_text(text: str) -> bool:
-    return bool(re.search(r"[a-zA-Z]", text))
 
 
 def load_answer_dict_from_file(ans_file) -> dict:
@@ -174,17 +159,25 @@ if start_grading:
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
                 base64_image = compress_and_encode_image(photo, max_size=3840)
 
-                # 💡 [초강력 OCR 필사 지시]: AI의 자동 교정 성향을 억누르기 위해 시각적 형상을 글자 그대로 필사하도록 강제
-                prompt = (
-                    "당신은 감정이 없는 철저한 영단어 필사 로봇입니다.\n"
-                    "시험지 사진의 각 문항 번호 옆에 학생이 적어둔 손글씨를 **스마트폰 자판을 치듯 알파벳 단위로 철자 하나도 빼놓거나 바꾸지 말고** 그대로 옮겨적으세요.\n"
-                    "특히 스펠링이 틀렸거나(예: 'issiontial'), 글자가 잘못 적혀 있어도 절대 정답 형태로 고쳐서 읽지 말고, 눈에 보이는 형태 그대로 타이핑하세요.\n"
-                    "다른 설명은 일체 쓰지 말고 아래 형식으로만 답변하세요.\n\n"
-                    "형식:\n"
-                    "1: r-e-q-u-i-r-e\n"
-                    "3: i-s-s-i-o-n-t-i-a-l\n"
-                    "15: (미응답)"
+                answer_context_str = "\n".join(
+                    ["- {}번 정답: {}".format(k, v) for k, v in answer_dict.items()]
                 )
+
+                # 💡 [핵심 패치]: 정답을 주되, 스펠링이 틀린 전형적인 오답(예: essential -> issiontial)을 예시로 들어 오답 판정을 강제함
+                prompt = (
+                    "당신은 영단어 시험지 채점관입니다. 아래 [문항별 정답]과 학생의 손글씨를 비교하여 정오답을 판정하세요.\n\n"
+                    "📋 [문항별 정답 리스트]:\n{}\n\n"
+                    "🚨 [초엄격 채점 규칙 - 자체보정 엄금]:\n"
+                    "1. 학생이 정답의 스펠링을 조금이라도 틀리게 적었거나(예: 정답이 'essential'인데 'issiontial'로 적은 경우), 철자가 누락되었으면 **무조건 '오답'**으로 판정하십시오.\n"
+                    "2. AI가 임의로 '학생이 이걸 의도했겠지' 하고 정답으로 처리하는 자의적 보정은 절대 금지합니다.\n"
+                    "3. 공란이거나 미응답인 경우에도 '오답'입니다.\n\n"
+                    "🚨 [출력 형식 준수]:\n"
+                    "반드시 아래 형식의 텍스트로만 답변하세요. 다른 설명은 일체 금지합니다.\n"
+                    "형식:\n"
+                    "1: 정답\n"
+                    "3: 오답\n"
+                    "15: 오답"
+                ).format(answer_context_str)
 
                 try:
                     chat_messages = [
@@ -211,41 +204,30 @@ if start_grading:
 
                     response_text = response.choices[0].message.content
                     
-                    gpt_parsed = {}
+                    gpt_results = {}
                     for line in response_text.splitlines():
                         line = line.strip()
                         match = re.search(r"^(\d+)\s*[:\.\-]?\s*(.*)$", line)
                         if match:
                             raw_num = match.group(1)
-                            q_val = match.group(2).strip()
+                            verdict = match.group(2).strip()
                             norm_num = normalize_q_num(raw_num)
-                            if norm_num and q_val:
-                                gpt_parsed[norm_num] = q_val
+                            if norm_num and verdict:
+                                gpt_results[norm_num] = verdict
 
                     records = []
                     for q_num_norm, c_ans in answer_dict.items():
-                        if q_num_norm in gpt_parsed:
-                            raw_spelled = gpt_parsed[q_num_norm]
-
-                            if raw_spelled in ["(미응답)", "미응답", "(공란)", "공란", "none", "null", ""]:
-                                student_word = "(미응답)"
-                                is_correct = False
-                                reason = "미응답 (공란)"
+                        if q_num_norm in gpt_results:
+                            verdict = gpt_results[q_num_norm]
+                            
+                            if "정답" in verdict and "오답" not in verdict:
+                                is_correct = True
+                                student_word = normalize_text(str(c_ans))
+                                reason = "정답"
                             else:
-                                student_word = clean_spelled_letters(raw_spelled)
-                                correct_word = normalize_text(str(c_ans))
-                                
-                                if not is_english_text(student_word):
-                                    is_correct = False
-                                    reason = "영단어 미작성"
-                                elif student_word == correct_word:
-                                    is_correct = True
-                                    reason = "정답"
-                                else:
-                                    is_correct = False
-                                    reason = "철자 불일치/누락 (작성: '{}' / 정답: '{}')".format(
-                                        student_word, correct_word
-                                    )
+                                is_correct = False
+                                student_word = "(철자 오류 또는 오답)"
+                                reason = "철자 불일치 / 오답"
                         else:
                             student_word = "(미응답)"
                             is_correct = False
