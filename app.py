@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="Grit English 스마트 채점실", page_icon="📝", layout="wide"
 )
 
-st.title("📝 Grit English 스마트 채점실 (AI 1차 채점 + 1초 검수 UI)")
+st.title("📝 Grit English 스마트 채점실 (고화질 · 확장형 검수 UI)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -74,6 +74,7 @@ def crop_columns(image: Image.Image):
 
 
 def crop_question_box_dynamic(image: Image.Image, q_num: int, total_q_count: int = 36):
+    """검수용 손글씨 이미지 크롭 함수 (상하 범위를 넓히고 여유 공간을 주어 잘림 현상 방지)"""
     width, height = image.size
     if total_q_count <= 25:
         top_margin = height * 0.155
@@ -81,13 +82,13 @@ def crop_question_box_dynamic(image: Image.Image, q_num: int, total_q_count: int
         if 1 <= q_num <= 10:
             row_h = (mid_table_y - top_margin) / 10.0
             idx = q_num - 1
-            x1, x2 = int(width * 0.28), int(width * 0.49)
+            x1, x2 = int(width * 0.25), int(width * 0.51)
             y1 = int(top_margin + (idx * row_h))
             y2 = int(top_margin + ((idx + 1) * row_h))
         elif 11 <= q_num <= 20:
             row_h = (mid_table_y - top_margin) / 10.0
             idx = q_num - 11
-            x1, x2 = int(width * 0.74), int(width * 0.98)
+            x1, x2 = int(width * 0.72), int(width * 0.99)
             y1 = int(top_margin + (idx * row_h))
             y2 = int(top_margin + ((idx + 1) * row_h))
         else:
@@ -95,7 +96,7 @@ def crop_question_box_dynamic(image: Image.Image, q_num: int, total_q_count: int
             bot_bot = height * 0.95
             sub_h = (bot_bot - bot_top) / 5.0
             idx = q_num - 21
-            x1, x2 = int(width * 0.22), int(width * 0.98)
+            x1, x2 = int(width * 0.20), int(width * 0.99)
             y1 = int(bot_top + (idx * sub_h))
             y2 = int(bot_top + ((idx + 1) * sub_h))
     else:
@@ -105,17 +106,18 @@ def crop_question_box_dynamic(image: Image.Image, q_num: int, total_q_count: int
         row_h = content_height / 18.0
         if 1 <= q_num <= 18:
             idx = q_num - 1
-            x1, x2 = int(width * 0.27), int(width * 0.51)
+            x1, x2 = int(width * 0.25), int(width * 0.53)
             y1 = int(top_margin + (idx * row_h))
             y2 = int(top_margin + ((idx + 1) * row_h))
         else:
             idx = q_num - 19
-            x1, x2 = int(width * 0.73), int(width * 0.99)
+            x1, x2 = int(width * 0.71), int(width * 1.0)
             y1 = int(top_margin + (idx * row_h))
             y2 = int(top_margin + ((idx + 1) * row_h))
 
-    padding_x = int((x2 - x1) * 0.05)
-    padding_y = int((y2 - y1) * 0.15)
+    # 💡 [화면 표시 범위 확장]: 상하 패딩을 넓혀서 글자가 위로 치우쳐 잘리는 현상 원천 차단
+    padding_x = int((x2 - x1) * 0.06)
+    padding_y = int((y2 - y1) * 0.25)
     
     crop_box = (
         max(0, x1 - padding_x),
@@ -191,7 +193,7 @@ if answer_files:
 
 st.markdown("---")
 
-start_grading = st.button("🚀 채점 및 검수 시작", type="primary", use_container_width=True)
+start_grading = st.button("🚀 고화질 채점 및 양방향 검수 시작", type="primary", use_container_width=True)
 
 if start_grading:
     if not api_key or not answer_files or not student_photos:
@@ -310,49 +312,81 @@ for idx, photo in enumerate(student_photos if student_photos else []):
         total_q = st.session_state["total_q_{}".format(idx)]
 
         st.markdown("---")
-        st.markdown("### 📄 파일명: `{}` 빠른 검수 및 확정".format(photo.name))
+        st.markdown("### 📄 파일명: `{}` 양방향 검수 및 확정".format(photo.name))
 
         wrong_items = [r for r in records if not r["정오답"]]
-        correct_count = sum(1 for r in records if r["정오답"])
+        correct_items = [r for r in records if r["정오답"]]
+        correct_count = len(correct_items)
 
-        st.info("📊 점수: **{} / {}점** (오답 판정: {}개)".format(
-            correct_count, len(records), len(wrong_items)
+        st.info("📊 점수: **{} / {}점** (오답: {}개 / 정답: {}개)".format(
+            correct_count, len(records), len(wrong_items), correct_count
         ))
 
-        if wrong_items:
-            st.markdown("#### 👁️ 오답 항목 빠른 1초 눈으로 확인 및 교정")
-            for w_idx, item in enumerate(wrong_items):
-                q_num = item["문항 번호"]
-                col1, col2, col3 = st.columns([1, 2, 1])
+        tab_wrong, tab_all = st.tabs(["❌ 오답 항목 검수 (정정)", "✅ 정답 항목 검수 (오답으로 내리기)"])
 
-                with col1:
-                    st.write("**{}번 문항**".format(q_num))
-                    st.write("작성: `{}`".format(item["학생 작성 답안"]))
-                    st.write("정답: **{}**".format(item["교재 정답"]))
+        with tab_wrong:
+            if wrong_items:
+                st.markdown("#### 👁️ 오답으로 판정된 항목 (실제 맞혔다면 정답으로 변경)")
+                for item in wrong_items:
+                    q_num = item["문항 번호"]
+                    col1, col2, col3 = st.columns([1, 2, 1])
 
-                with col2:
-                    if q_num.isdigit():
-                        cropped = crop_question_box_dynamic(full_img, int(q_num), total_q)
-                        st.image(cropped, caption="학생 작성 실제 손글씨", width=220)
+                    with col1:
+                        st.write("**{}번 문항**".format(q_num))
+                        st.write("작성: `{}`".format(item["학생 작성 답안"]))
+                        st.write("정답: **{}**".format(item["교재 정답"]))
 
-                with col3:
-                    if st.button("⭕ 정답으로 변경", key="fix_{}_{}".format(idx, q_num)):
-                        for r in records:
-                            if r["문항 번호"] == q_num:
-                                r["정오답"] = True
-                                r["사유"] = "선생님 검수 정답 인정"
-                        st.session_state[rec_key] = records
-                        st.rerun()
+                    with col2:
+                        if q_num.isdigit():
+                            cropped = crop_question_box_dynamic(full_img, int(q_num), total_q)
+                            # 💡 [화면 표시 크기 확대]: 고화질 컷을 더 선명하고 큼직하게 렌더링
+                            st.image(cropped, caption="학생 작성 실제 손글씨 (확대)", width=320)
 
-            df_wrong = pd.DataFrame([r for r in records if not r["정오답"]])
-            if not df_wrong.empty:
-                csv_data = df_wrong[["문항 번호", "학생 작성 답안", "교재 정답", "사유"]].to_csv(index=False).encode("utf-8-sig")
-                st.download_button(
-                    label="📥 최종 오답노트 다운로드 (CSV)",
-                    data=csv_data,
-                    file_name="오답노트_{}.csv".format(photo.name),
-                    key="dl_final_{}".format(idx)
-                )
+                    with col3:
+                        if st.button("⭕ 정답으로 변경", key="fix_to_corr_{}_{}".format(idx, q_num)):
+                            for r in records:
+                                if r["문항 번호"] == q_num:
+                                    r["정오답"] = True
+                                    r["사유"] = "선생님 검수 정답 인정"
+                            st.session_state[rec_key] = records
+                            st.rerun()
+            else:
+                st.success("오답 판정된 항목이 없습니다.")
+
+        with tab_all:
+            if correct_items:
+                st.markdown("#### 👁️ 정답으로 판정된 항목 (AI가 잘못 읽어 정답 처리했다면 오답으로 내리기)")
+                for item in correct_items:
+                    q_num = item["문항 번호"]
+                    col1, col2, col3 = st.columns([1, 2, 1])
+
+                    with col1:
+                        st.write("**{}번 문항**".format(q_num))
+                        st.write("작성: `{}`".format(item["학생 작성 답안"]))
+                        st.write("정답: **{}**".format(item["교재 정답"]))
+
+                    with col2:
+                        if q_num.isdigit():
+                            cropped = crop_question_box_dynamic(full_img, int(q_num), total_q)
+                            st.image(cropped, caption="학생 작성 실제 손글씨 (확대)", width=320)
+
+                    with col3:
+                        if st.button("❌ 오답으로 변경", key="fix_to_wrong_{}_{}".format(idx, q_num)):
+                            for r in records:
+                                if r["문항 번호"] == q_num:
+                                    r["정오답"] = False
+                                    r["사유"] = "선생님 검수 오답 처리"
+                            st.session_state[rec_key] = records
+                            st.rerun()
+
+        df_wrong = pd.DataFrame([r for r in records if not r["정오답"]])
+        if not df_wrong.empty:
+            csv_data = df_wrong[["문항 번호", "학생 작성 답안", "교재 정답", "사유"]].to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                label="📥 최종 오답노트 다운로드 (CSV)",
+                data=csv_data,
+                file_name="오답노트_{}.csv".format(photo.name),
+                key="dl_final_{}".format(idx)
+            )
         else:
-            st.balloons()
-            st.success("🎉 모든 문항이 정답입니다!")
+            st.success("🎉 최종 확정된 오답이 없습니다!")
