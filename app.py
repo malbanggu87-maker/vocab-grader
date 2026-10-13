@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="Grit English 스마트 채점실", page_icon="📝", layout="wide"
 )
 
-st.title("📝 Grit English 스마트 채점실 (문항별 독립 정밀 채점 엔진)")
+st.title("📝 Grit English 스마트 채점실 (가로 전체 행 배너 검수 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -62,7 +62,11 @@ def prepare_image(uploaded_file):
     return image
 
 
-def crop_question_box_dynamic(image: Image.Image, q_num: int, total_q_count: int = 36):
+def crop_wide_row_banner(image: Image.Image, q_num: int, total_q_count: int = 36):
+    """
+    [새로운 검수 스타일] 잘림 현상을 완벽히 해결하기 위해
+    표의 왼쪽(문항번호/뜻)부터 오른쪽(손글씨 답란)까지 가로 전체 행을 넓게 캡처하는 배너 함수
+    """
     width, height = image.size
     if total_q_count <= 25:
         top_margin = height * 0.155
@@ -70,13 +74,15 @@ def crop_question_box_dynamic(image: Image.Image, q_num: int, total_q_count: int
         if 1 <= q_num <= 10:
             row_h = (mid_table_y - top_margin) / 10.0
             idx = q_num - 1
-            x1, x2 = int(width * 0.25), int(width * 0.51)
+            # 💡 좌측 칼럼 전체 가로 폭 (번호 + 뜻 + 답란 모두 포함)
+            x1, x2 = int(width * 0.05), int(width * 0.51)
             y1 = int(top_margin + (idx * row_h))
             y2 = int(top_margin + ((idx + 1) * row_h))
         elif 11 <= q_num <= 20:
             row_h = (mid_table_y - top_margin) / 10.0
             idx = q_num - 11
-            x1, x2 = int(width * 0.72), int(width * 0.99)
+            # 💡 우측 칼럼 전체 가로 폭
+            x1, x2 = int(width * 0.51), int(width * 0.98)
             y1 = int(top_margin + (idx * row_h))
             y2 = int(top_margin + ((idx + 1) * row_h))
         else:
@@ -84,7 +90,8 @@ def crop_question_box_dynamic(image: Image.Image, q_num: int, total_q_count: int
             bot_bot = height * 0.95
             sub_h = (bot_bot - bot_top) / 5.0
             idx = q_num - 21
-            x1, x2 = int(width * 0.20), int(width * 0.99)
+            # 💡 하단 서술형/문장형 영역 전체 폭
+            x1, x2 = int(width * 0.05), int(width * 0.98)
             y1 = int(bot_top + (idx * sub_h))
             y2 = int(bot_top + ((idx + 1) * sub_h))
     else:
@@ -94,22 +101,22 @@ def crop_question_box_dynamic(image: Image.Image, q_num: int, total_q_count: int
         row_h = content_height / 18.0
         if 1 <= q_num <= 18:
             idx = q_num - 1
-            x1, x2 = int(width * 0.25), int(width * 0.53)
+            x1, x2 = int(width * 0.05), int(width * 0.51)
             y1 = int(top_margin + (idx * row_h))
             y2 = int(top_margin + ((idx + 1) * row_h))
         else:
             idx = q_num - 19
-            x1, x2 = int(width * 0.71), int(width * 1.0)
+            x1, x2 = int(width * 0.51), int(width * 0.99)
             y1 = int(top_margin + (idx * row_h))
             y2 = int(top_margin + ((idx + 1) * row_h))
 
-    padding_x = int((x2 - x1) * 0.06)
-    padding_y = int((y2 - y1) * 0.25)
+    # 상하 여유를 충분히 주어 글자가 절대 잘리지 않도록 함
+    padding_y = int((y2 - y1) * 0.3)
     
     crop_box = (
-        max(0, x1 - padding_x),
+        max(0, x1),
         max(0, y1 - padding_y),
-        min(width, x2 + padding_x),
+        min(width, x2),
         min(height, y2 + padding_y)
     )
     return image.crop(crop_box)
@@ -210,8 +217,6 @@ if start_grading:
                 total_q_count = len(answer_dict)
 
                 records = []
-                
-                # 💡 핵심: 문항별로 낱개 크롭하여 개별 API 호출 (오류 발생 원천 차단 및 정확도 극대화)
                 system_role = (
                     "당신은 영단어 시험지 전용 정밀 문자 판독(OCR) 및 채점 시스템입니다.\n"
                     "제공된 단 하나의 문항 영역 이미지와 교재 정답을 비교하여 판정하십시오.\n"
@@ -230,7 +235,8 @@ if start_grading:
                         continue
                     
                     q_int = int(q_num_norm)
-                    cropped_img = crop_question_box_dynamic(full_image, q_int, total_q_count)
+                    # 💡 가로 전체 배너 크롭 적용
+                    cropped_img = crop_wide_row_banner(full_image, q_int, total_q_count)
                     img_b64 = image_to_base64(cropped_img)
 
                     prompt = (
@@ -275,11 +281,11 @@ if start_grading:
                             elif "자체보정" in status:
                                 is_correct = True
                                 reason = "AI 자체 보정 정답 (확인 필요)"
-                                is_flagged = True  # 자체 보정된 문항은 검수 대상으로 띄움
+                                is_flagged = True
                             else:
                                 is_correct = False
                                 reason = f"철자 오류/오기 (작성: '{raw_written}' / 정답: '{c_ans}')"
-                                is_flagged = True  # 오답은 검수 대상으로 띄움
+                                is_flagged = True
 
                     except Exception as item_err:
                         raw_written = "(판독 오류)"
@@ -316,51 +322,52 @@ for idx, photo in enumerate(student_photos if student_photos else []):
         correct_count = sum(1 for r in records if r["정오답"])
         review_items = [r for r in records if r["검수필요"]]
 
-        st.info(f"📊 최종 점수: **{correct_count} / {len(records)}점** | 🤖 AI 완벽 자동 통과(정답): **{len(records) - len(review_items)}개** | ⚠️ 확인이 필요한 검수 문항(오답/자체보정): **{len(review_items)}개**")
+        st.info(f"📊 최종 점수: **{correct_count} / {len(records)}점** | 🤖 AI 완벽 자동 통과: **{len(records) - len(review_items)}개** | ⚠️ 확인이 필요한 검수 문항: **{len(review_items)}개**")
 
         if review_items:
-            st.markdown("#### 🔍 [스마트 예외 검수] AI가 오답 처리했거나 자체 보정한 항목만 확인하세요")
+            st.markdown("#### 🔍 [배너형 스마트 검수] 아래의 넓은 가로 배너를 통해 잘림 없이 눈으로 확인하세요")
+            
             for item in review_items:
                 q_num = item["문항 번호"]
                 is_currently_correct = item["정오답"]
 
-                col1, col2, col3 = st.columns([1, 2, 1])
+                # 💡 레이아웃 개선: 상단에 정보를 보여주고, 그 아래에 큼직한 가로 배너 이미지를 통째로 배치
+                with st.container(border=True):
+                    col_info, col_btn = st.columns([3, 1])
+                    
+                    with col_info:
+                        st.markdown(f"**📌 {q_num}번 문항** | 교재 정답: **{item['교재 정답']}** | AI 판독: `{item['학생 작성 답안']}`")
+                        if is_currently_correct:
+                            st.warning(f"상태: 정답 ({item['사유']})")
+                        else:
+                            st.error(f"상태: 오답 ({item['사유']})")
 
-                with col1:
-                    st.write(f"**{q_num}번 문항**")
-                    st.write(f"학생 작성: `{item['학생 작성 답안']}`")
-                    st.write(f"교재 정답: **{item['교재 정답']}**")
-                    if is_currently_correct:
-                        st.warning(f"상태: 정답 ({item['사유']})")
-                    else:
-                        st.error(f"상태: 오답 ({item['사유']})")
+                    with col_btn:
+                        st.write("")
+                        if is_currently_correct:
+                            if st.button("❌ 틀렸음 (오답)", key=f"to_wrong_{idx}_{q_num}", use_container_width=True):
+                                for r in records:
+                                    if r["문항 번호"] == q_num:
+                                        r["정오답"] = False
+                                        r["검수필요"] = False
+                                        r["사유"] = "선생님 검수: 오답 정정"
+                                st.session_state[rec_key] = records
+                                st.rerun()
+                        else:
+                            if st.button("⭕ 정답 인정", key=f"to_corr_{idx}_{q_num}", use_container_width=True):
+                                for r in records:
+                                    if r["문항 번호"] == q_num:
+                                        r["정오답"] = True
+                                        r["검수필요"] = False
+                                        r["사유"] = "선생님 검수: 정답 인정"
+                                st.session_state[rec_key] = records
+                                st.rerun()
 
-                with col2:
+                    # 💡 가로 전체 배너 이미지 출력 (너비를 넓혀서 잘림 방지)
                     if q_num.isdigit():
-                        cropped = crop_question_box_dynamic(full_img, int(q_num), total_q)
-                        st.image(cropped, caption="학생 실제 손글씨 (확대)", width=280)
+                        banner_img = crop_wide_row_banner(full_img, int(q_num), total_q)
+                        st.image(banner_img, caption=f"[{q_num}번 문항 가로 전체 행 배너 View]", use_container_width=True)
 
-                with col3:
-                    st.write("")
-                    st.write("")
-                    if is_currently_correct:
-                        if st.button("❌ 틀렸음 (오답으로 내리기)", key=f"to_wrong_{idx}_{q_num}"):
-                            for r in records:
-                                if r["문항 번호"] == q_num:
-                                    r["정오답"] = False
-                                    r["검수필요"] = False
-                                    r["사유"] = "선생님 검수: 오답 정정"
-                            st.session_state[rec_key] = records
-                            st.rerun()
-                    else:
-                        if st.button("⭕ 실제론 정답임", key=f"to_corr_{idx}_{q_num}"):
-                            for r in records:
-                                if r["문항 번호"] == q_num:
-                                    r["정오답"] = True
-                                    r["검수필요"] = False
-                                    r["사유"] = "선생님 검수: 정답 인정"
-                            st.session_state[rec_key] = records
-                            st.rerun()
         else:
             st.success("🎉 AI가 모든 문항을 완벽하게 처리하여 검수할 항목이 없습니다!")
 
