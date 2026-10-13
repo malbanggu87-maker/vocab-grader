@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="영단어/문장 오답 전용 채점", page_icon="📝", layout="centered"
 )
 
-st.title("📝 Grit English 채점실행 명령 (철자 완전 일치 엄격 검증 모드)")
+st.title("📝 Grit English 채점실행 명령 (2단 영역 분할 & Strict OCR 모드)")
 st.write("Made by Jason")
 
 st.sidebar.header("🔑 설정")
@@ -70,21 +70,35 @@ answer_files = st.file_uploader(
 )
 
 
-def compress_and_encode_image(uploaded_file, max_size=3840):
+def prepare_image(uploaded_file):
+    """이미지 EXIF 회전 보정 및 RGB 변환"""
     file_bytes = uploaded_file.getvalue()
     image = Image.open(io.BytesIO(file_bytes))
-
     try:
         image = ImageOps.exif_transpose(image)
     except Exception:
         pass
-
     if image.mode != "RGB":
         image = image.convert("RGB")
+    return image
 
-    image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+
+def crop_columns(image: Image.Image):
+    """시험지 이미지를 좌측 칼럼과 우측 칼럼으로 2단 분할"""
+    width, height = image.size
+    # 헤더 제외 (상단 18% 제외), 하단 일부 제외
+    top = int(height * 0.18)
+    bottom = int(height * 0.95)
+    mid_x = int(width * 0.50)
+
+    left_col = image.crop((0, top, mid_x, bottom))
+    right_col = image.crop((mid_x, top, width, bottom))
+    return left_col, right_col
+
+
+def image_to_base64(pil_img: Image.Image) -> str:
     buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=98, subsampling=0)
+    pil_img.save(buffer, format="JPEG", quality=95)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
@@ -132,7 +146,7 @@ if answer_files:
 
 st.markdown("---")
 
-start_grading = st.button("🚀 채점 시작", type="primary", use_container_width=True)
+start_grading = st.button("🚀 채점 시작 (전면 개편 엔진)", type="primary", use_container_width=True)
 
 if start_grading:
     if not api_key or not answer_files or not student_photos:
@@ -162,148 +176,16 @@ if start_grading:
                     continue
 
                 answer_dict = load_answer_dict_from_file(matched_answer_file)
-                base64_image = compress_and_encode_image(photo, max_size=3840)
+                image = prepare_image(photo)
+                left_col_img, right_col_img = crop_columns(image)
 
-                target_numbers_str = ", ".join(list(answer_dict.keys()))
+                left_b64 = image_to_base64(left_col_img)
+                right_b64 = image_to_base64(right_col_img)
 
+                target_numbers = sorted([int(k) for k in answer_dict.keys() if k.isdigit()])
+                target_numbers_str = ", ".join([str(n) for n in target_numbers])
+
+                # 💡 [전면 개편 초엄격 시스템 롤]: 정답 단어 미제공, 오직 단일 문항 이미지의 눈에 보이는 알파벳 1:1 필사 지시
                 system_role = (
-                    "당신은 대한민국 최고 수준의 냉정하고 철저한 영단어/문장 학원 수석 OCR 판독 머신입니다.\n"
-                    "이 작업의 목적은 학생의 손글씨를 티끌 하나 다르게 바꾸지 않고 원본 그대로 읽어내는 것입니다.\n"
-                    "1. 학생이 스펠링을 틀렸거나 오타를 낸 경우(예: 'variety'를 'verity'로, 'destination'을 'distination'으로, 'proverb'를 'preverb'로 쓴 것 등), "
-                    "절대로 올바른 정답 단어로 교정하거나 유추하여 출력하지 말고, **종이에 적힌 실제 알파벳 철자 그대로** 타이핑하십시오.\n"
-                    "2. 답란이 비어있는 공란은 무조건 '(미응답)'으로 처리하십시오.\n"
-                    "3. 취소선이 그어진 단어는 무시하고 새로 고쳐 쓴 최종 단어만 읽으십시오."
-                )
-
-                prompt = (
-                    "첨부된 시험지 이미지에서 아래 지정된 문항 번호들에 해당하는 학생의 손글씨 답안을 찾으세요.\n\n"
-                    "📌 [찾아야 할 문항 번호 목록]: {}\n\n"
-                    "🚨 [엄격한 필사 원칙]:\n"
-                    "- 오타('verity', 'distination', 'preverb' 등)를 절대 고쳐주지 말고 보이는 그대로 적으십시오.\n"
-                    "- 공란은 '(미응답)'으로 적으십시오.\n\n"
-                    "반드시 아래 형식으로만 답변하세요. 다른 설명이나 사족은 절대 금지합니다.\n"
-                    "형식 예시:\n"
-                    "1: degree\n"
-                    "4: verity\n"
-                    "15: distination\n"
-                    "26: preverb"
-                ).format(target_numbers_str)
-
-                try:
-                    chat_messages = [
-                        {
-                            "role": "system",
-                            "content": system_role
-                        },
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": "data:image/jpeg;base64,{}".format(base64_image),
-                                        "detail": "high"
-                                    }
-                                }
-                            ]
-                        }
-                    ]
-
-                    response = client.chat.completions.create(
-                        model=selected_model,
-                        temperature=0.0,
-                        messages=chat_messages
-                    )
-
-                    response_text = response.choices[0].message.content
-                    
-                    gpt_parsed = {}
-                    for line in response_text.splitlines():
-                        line = line.strip()
-                        match = re.search(r"^(\d+)\s*[:\.\-]?\s*(.*)$", line)
-                        if match:
-                            raw_num = match.group(1)
-                            q_val = match.group(2).strip()
-                            norm_num = normalize_q_num(raw_num)
-                            if norm_num and q_val:
-                                gpt_parsed[norm_num] = q_val
-
-                    records = []
-                    for q_num_norm, c_ans in answer_dict.items():
-                        if q_num_norm in gpt_parsed:
-                            raw_written = gpt_parsed[q_num_norm]
-
-                            if raw_written in ["(미응답)", "미응답", "(공란)", "공란", "none", "null", ""]:
-                                student_word = "(미응답)"
-                                is_correct = False
-                                reason = "미응답 (공란)"
-                            else:
-                                student_word = normalize_text(raw_written)
-                                correct_word = normalize_text(str(c_ans))
-                                
-                                # 💡 [철저한 오타 검증]: AI가 억지로 교정하려 해도 파이썬 레벨에서 100% 글자 일치 여부만 따져서 오답 처리
-                                if not is_english_text(student_word):
-                                    is_correct = False
-                                    reason = "영단어 미작성"
-                                elif student_word == correct_word:
-                                    is_correct = True
-                                    reason = "정답"
-                                else:
-                                    is_correct = False
-                                    reason = "철자 오류/오기 (작성: '{}' / 정답: '{}')".format(
-                                        raw_written, str(c_ans).strip()
-                                    )
-                        else:
-                            student_word = "(미응답)"
-                            is_correct = False
-                            reason = "시험지에서 해당 문항 번호를 찾지 못함 (미인식/미응답)"
-
-                        records.append({
-                            "문항 번호": q_num_norm,
-                            "학생 작성 답안": student_word,
-                            "교재 정답": str(c_ans).strip(),
-                            "정오답": is_correct,
-                            "사유": reason,
-                        })
-
-                    total_q_count = len(records)
-                    total_correct = sum(1 for r in records if r["정오답"])
-                    wrong_count = total_q_count - total_correct
-
-                    wrong_details = [
-                        {
-                            "문항 번호": r["문항 번호"],
-                            "학생 작성 답안": r["학생 작성 답안"],
-                            "교재 정답": r["교재 정답"],
-                            "사유": r["사유"],
-                        }
-                        for r in records
-                        if not r["정오답"]
-                    ]
-
-                    st.info("결과: **{} / {}점** (틀린 문항: {}개)".format(
-                        total_correct, total_q_count, wrong_count
-                    ))
-
-                    if wrong_details:
-                        df_wrong = pd.DataFrame(wrong_details)
-                        st.dataframe(df_wrong, use_container_width=True, hide_index=True)
-
-                        csv_data = df_wrong.to_csv(index=False).encode("utf-8-sig")
-                        safe_filename = re.sub(r"[^\w\-_.]", "_", photo.name)
-                        st.download_button(
-                            label="📥 `{}` 오답노트 다운로드 (CSV)".format(photo.name),
-                            data=csv_data,
-                            file_name="오답노트_{}.csv".format(safe_filename),
-                            mime="text/csv",
-                            key="dl_{}".format(idx),
-                        )
-                    else:
-                        st.balloons()
-                        st.success("🎉 모든 문항을 맞혔습니다!")
-
-                except Exception as api_err:
-                    st.error("API 호출 또는 채점 처리 중 오류 발생: {}".format(api_err))
-
-                st.markdown("---")
+                    "당신은 정밀 문자 판독(OCR) 전용 시스템입니다.\n"
+                    "주어진 영역별 이미지에서 학생이 직접 쓴 손글씨 알파벳을 철자
