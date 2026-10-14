@@ -101,7 +101,6 @@ def load_student_roster(roster_file) -> dict:
         s_id = str(row.get("id", row.iloc[0])).strip()
         s_pw = str(row.get("password", row.get("pw", row.iloc[1]))).strip()
         s_name = str(row.get("name", row.iloc[2])).strip()
-        # 여러 유닛인 경우 쉼표(,)로 구분되어 입력된 것을 리스트로 분리
         s_units_raw = str(row.get("unit", row.get("test", row.iloc[3]))).strip()
         s_units = [u.strip() for u in re.split(r"[,/]", s_units_raw) if u.strip()]
         
@@ -132,7 +131,7 @@ admin_mode = st.sidebar.checkbox("교사 모드 활성화 (관리자용)")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 👥 학생 명단(ID/PW/유닛들) 업로드")
-st.sidebar.caption("💡 엑셀의 Unit 열에 여러 개를 적을 때 쉼표로 구분하세요 (예: `Unit_30, Unit_31, Unit_32`)")
+st.sidebar.caption("💡 엑셀의 Unit 열에 여러 개를 적을 때 쉼표로 구분하세요 (예: Unit_30, Unit_31, Unit_32)")
 roster_file = st.sidebar.file_uploader(
     "학생 명단 엑셀/CSV 파일 업로드",
     type=["xlsx", "xls", "csv"],
@@ -222,7 +221,6 @@ if admin_mode:
             with st.expander(
                 f"👤 {res_data.get('student_name')} ({res_data.get('student_id')}) | 유닛들: [{', '.join(res_data.get('units', []))}] | 총점: {res_data.get('total_score')} / {res_data.get('total_possible')}점 | {res_data.get('timestamp', '')}"
             ):
-                # 유닛별 상세 결과 테이블 표시
                 for u_name, u_data in res_data.get("unit_results", {}).items():
                     st.markdown(f"#### 📄 시험지: `{u_name}` (점수: {u_data['score']} / {u_data['total']}점)")
                     df_res = pd.DataFrame(u_data["records"])
@@ -249,7 +247,6 @@ else:
         if "logged_in_student" not in st.session_state:
             st.session_state["logged_in_student"] = None
 
-        # 로그인 전 화면
         if not st.session_state["logged_in_student"]:
             st.markdown("### 🔑 학원계정으로 로그인하세요")
             col_l1, col_l2 = st.columns(2)
@@ -267,12 +264,11 @@ else:
                 else:
                     st.error("❌ 아이디 또는 비밀번호가 올바르지 않습니다.")
 
-        # 로그인 후 다중 유닛 응시 화면
         else:
             current_id = st.session_state["logged_in_student"]
             student_info = roster[current_id]
             student_name = student_info["name"]
-            assigned_units = student_info["units"] # 배정된 유닛 리스트 (예: [Unit_30, Unit_31, Unit_32])
+            assigned_units = student_info["units"]
 
             top_c1, top_c2 = st.columns([4, 1])
             with top_c1:
@@ -282,7 +278,6 @@ else:
                     st.session_state["logged_in_student"] = None
                     st.rerun()
 
-            # 배정된 모든 유닛의 정답지가 업로드되었는지 확인
             missing_units = [u for u in assigned_units if u not in answer_banks]
             if missing_units:
                 st.error(f"⚠️ 다음 배정된 시험지의 정답 파일이 아직 등록되지 않았습니다: `{missing_units}`. 선생님께 문의하세요!")
@@ -296,7 +291,6 @@ else:
 
                 state = st.session_state[exam_key_state]
 
-                # 1. 시험 시작 전 안내
                 if not state["started"] and not state["submitted"]:
                     target_end_str = st.session_state["exam_settings"]["end_time_str"]
                     total_q_count = sum([len(answer_banks[u]) for u in assigned_units])
@@ -311,7 +305,6 @@ else:
                         state["started"] = True
                         st.rerun()
 
-                # 2. 시험 진행 중 (탭으로 유닛 3장을 나누어 타이핑 입력)
                 elif state["started"] and not state["submitted"]:
                     target_end_str = st.session_state["exam_settings"]["end_time_str"]
 
@@ -323,7 +316,6 @@ else:
                     except Exception:
                         remaining_time = 300
 
-                    # 마감 시각 도달 시 자동 제출 로직
                     if remaining_time <= 0:
                         state["submitted"] = True
                         
@@ -375,7 +367,6 @@ else:
                         save_archive(st.session_state["submissions"])
                         st.rerun()
 
-                    # 우측 상단 미니 타이머 배너
                     st.markdown("---")
                     head_col1, head_col2 = st.columns([3, 1])
                     with head_col1:
@@ -394,7 +385,6 @@ else:
 
                     st.markdown("")
 
-                    # 💡 Streamlit 탭을 활용해 유닛별 시험지를 깔끔하게 탭으로 분리하여 제공
                     unit_tabs = st.tabs([f"📄 {u}" for u in assigned_units])
                     
                     for idx, u_name in enumerate(assigned_units):
@@ -407,7 +397,6 @@ else:
                             for i, q_num in enumerate(q_keys):
                                 target_col = cols[i % 2]
                                 with target_col:
-                                    # 키가 유닛별로 독립되도록 설정
                                     st.text_input(f"{q_num}번 문항", key=f"q_{u_name}_{q_num}")
 
                     st.markdown("---")
@@ -437,4 +426,54 @@ else:
 
                                 records.append({
                                     "문항 번호": q_num,
-                                    "학생 작성 답안
+                                    "학생 작성 답안": raw_ans if raw_ans else "(공란)",
+                                    "교재 정답": str(c_ans),
+                                    "정오답": is_correct,
+                                    "사유": reason,
+                                })
+                            unit_results[u_name] = {"score": u_correct, "total": len(ans_dict), "records": records}
+                            total_score += u_correct
+                            total_possible += len(ans_dict)
+
+                        record_id = f"{current_id}_multi_{int(time.time())}"
+                        current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+                        st.session_state["submissions"][record_id] = {
+                            "student_id": current_id,
+                            "student_name": student_name,
+                            "units": assigned_units,
+                            "total_score": total_score,
+                            "total_possible": total_possible,
+                            "status": "정상 제출",
+                            "timestamp": current_time_str,
+                            "unit_results": unit_results,
+                        }
+                        save_archive(st.session_state["submissions"])
+                        st.rerun()
+
+                    time.sleep(1)
+                    st.rerun()
+
+                elif state["submitted"]:
+                    user_subs = [
+                        v
+                        for v in st.session_state["submissions"].values()
+                        if v.get("student_id") == current_id
+                    ]
+                    latest_sub = user_subs[-1] if user_subs else {}
+
+                    st.balloons()
+                    st.success(
+                        f"🎉 모든 시험이 종료되었습니다! 총점: {latest_sub.get('total_score', 0)} / {latest_sub.get('total_possible', 0)}점"
+                    )
+
+                    if latest_sub.get("status") == "마감 시각 도달 자동 제출":
+                        st.error("⏰ 시험 종료 시각이 되어 자동 마감 및 제출되었습니다.")
+
+                    for u_name, u_data in latest_sub.get("unit_results", {}).items():
+                        st.markdown(f"#### 📄 `{u_name}` 결과: {u_data['score']} / {u_data['total']}점")
+                        df_my_res = pd.DataFrame(u_data["records"])
+                        df_my_wrong = df_my_res[~df_my_res["정오답"]]
+                        if not df_my_wrong.empty:
+                            st.markdown("오답 리스트:")
+                            st.dataframe(df_my_wrong[["문항 번호", "학생 작성 답안", "교재 정답"]], use_container_width=True)
