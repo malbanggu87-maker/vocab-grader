@@ -18,6 +18,8 @@ st.title("💻 Grit English 학생별 다중 유닛(3장) 맞춤 단어 시험 �
 st.write("Made by Jason")
 
 ARCHIVE_FILE = "exam_archive.json"
+ROSTER_FILE = "roster.json"
+ANSWERS_FILE = "answers.json"
 
 
 def load_archive():
@@ -36,6 +38,42 @@ def save_archive(submissions):
             json.dump(submissions, f, ensure_ascii=False, indent=4)
     except Exception as e:
         print(f"저장 오류: {e}")
+
+
+def load_roster_from_disk():
+    if os.path.exists(ROSTER_FILE):
+        try:
+            with open(ROSTER_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_roster_to_disk(roster):
+    try:
+        with open(ROSTER_FILE, "w", encoding="utf-8") as f:
+            json.dump(roster, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"명단 저장 오류: {e}")
+
+
+def load_answers_from_disk():
+    if os.path.exists(ANSWERS_FILE):
+        try:
+            with open(ANSWERS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_answers_to_disk(answers):
+    try:
+        with open(ANSWERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(answers, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"정답지 저장 오류: {e}")
 
 
 def normalize_text(text: str) -> str:
@@ -108,11 +146,11 @@ def load_student_roster(roster_file) -> dict:
     return roster
 
 
-# 세션 상태 초기화
+# 세션 상태 및 서버 디스크 연동 초기화
 if "answer_banks" not in st.session_state:
-    st.session_state["answer_banks"] = {}
+    st.session_state["answer_banks"] = load_answers_from_disk()
 if "student_roster" not in st.session_state:
-    st.session_state["student_roster"] = {}
+    st.session_state["student_roster"] = load_roster_from_disk()
 if "submissions" not in st.session_state:
     st.session_state["submissions"] = load_archive()
 if "exam_settings" not in st.session_state:
@@ -139,8 +177,10 @@ if is_admin:
     )
     if roster_file:
         try:
-            st.session_state["student_roster"] = load_student_roster(roster_file)
-            st.sidebar.success(f"✅ 총 {len(st.session_state['student_roster'])}명 등록 완료")
+            new_roster = load_student_roster(roster_file)
+            st.session_state["student_roster"] = new_roster
+            save_roster_to_disk(new_roster)  # 디스크에 저장하여 모든 세션에 공유
+            st.sidebar.success(f"✅ 총 {len(new_roster)}명 등록 및 서버 저장 완료")
         except Exception:
             st.sidebar.error("❌ 파일 형식을 확인해주세요.")
 
@@ -157,7 +197,8 @@ if is_admin:
         for ans_f in admin_answer_files:
             unit_name = extract_unit_name(ans_f.name)
             st.session_state["answer_banks"][unit_name] = load_answer_dict_from_file(ans_f)
-        st.sidebar.success(f"✅ 총 {len(st.session_state['answer_banks'])}개 시험지 로드 완료")
+        save_answers_to_disk(st.session_state["answer_banks"])  # 디스크에 저장하여 모든 세션에 공유
+        st.sidebar.success(f"✅ 총 {len(st.session_state['answer_banks'])}개 시험지 로드 및 서버 저장 완료")
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("### ⏰ 시험 목표 종료 시각 설정")
