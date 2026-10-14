@@ -9,15 +9,14 @@ import streamlit as st
 from datetime import datetime
 
 st.set_page_config(
-    page_title="Grit English 디지털 단어 시험 시스템",
+    page_title="Grit English 맞춤형 디지털 단어 시험실",
     page_icon="💻",
     layout="wide",
 )
 
-st.title("💻 Grit English 디지털 단어 시험 & 자동 채점 시스템 (시계 기준 마감형)")
+st.title("💻 Grit English 학생별 ID 로그인 맞춤 단어 시험 시스템")
 st.write("Made by Jason")
 
-# 영구 보관 파일 경로 설정
 ARCHIVE_FILE = "exam_archive.json"
 
 
@@ -87,14 +86,42 @@ def load_answer_dict_from_file(ans_file) -> dict:
     return ans_dict
 
 
+def load_student_roster(roster_file) -> dict:
+    # 학생 명단 파일 읽기 (컬럼: ID, 비밀번호, 이름, 배정유닛)
+    bytes_data = roster_file.getvalue()
+    f_name = roster_file.name.lower()
+    if f_name.endswith(".csv"):
+        df = pd.read_csv(io.BytesIO(bytes_data))
+    else:
+        df = pd.read_excel(io.BytesIO(bytes_data), engine="openpyxl")
+
+    # 컬럼명 표준화 (소문자 및 공백 제거)
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    
+    roster = {}
+    for _, row in df.iterrows():
+        # 컬럼 매핑 (id, pw/password, name, unit/test)
+        s_id = str(row.get("id", row.iloc[0])).strip()
+        s_pw = str(row.get("password", row.get("pw", row.iloc[1]))).strip()
+        s_name = str(row.get("name", row.iloc[2])).strip()
+        s_unit = str(row.get("unit", row.get("test", row.iloc[3]))).strip()
+        
+        roster[s_id] = {
+            "password": s_pw,
+            "name": s_name,
+            "unit": s_unit
+        }
+    return roster
+
+
 # 세션 상태 초기화
 if "answer_banks" not in st.session_state:
     st.session_state["answer_banks"] = {}
+if "student_roster" not in st.session_state:
+    st.session_state["student_roster"] = {}
 if "submissions" not in st.session_state:
     st.session_state["submissions"] = load_archive()
 if "exam_settings" not in st.session_state:
-    # 기본 종료 시각을 현재 시각 기준 10분 뒤로 설정
-    default_end_time = datetime.now().strftime("%H:%M")
     st.session_state["exam_settings"] = {"end_time_str": "18:00"}
 
 
@@ -103,6 +130,20 @@ if "exam_settings" not in st.session_state:
 # ==========================================
 st.sidebar.header("🛠️ 교사 전용 관리 패널")
 admin_mode = st.sidebar.checkbox("교사 모드 활성화 (관리자용)")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 👥 학생 명단(ID/PW/유닛) 업로드")
+roster_file = st.sidebar.file_uploader(
+    "학생 명단 엑셀/CSV 파일 업로드",
+    type=["xlsx", "xls", "csv"],
+    key="admin_roster"
+)
+if roster_file:
+    try:
+        st.session_state["student_roster"] = load_student_roster(roster_file)
+        st.sidebar.success(f"✅ 총 {len(st.session_state['student_roster'])}명의 학생 계정이 등록되었습니다.")
+    except Exception as e:
+        st.sidebar.error(f"❌ 파일 형식을 확인해주세요. (ID, Password, Name, Unit 순서)")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 📄 정답지 엑셀 일괄 등록")
@@ -125,7 +166,6 @@ if admin_answer_files:
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### ⏰ 시험 목표 종료 시각 설정")
-# 윈도우 시계 기준 종료 시각 입력 (HH:MM 형식)
 end_time_input = st.sidebar.text_input(
     "시험 종료 시각 (24시간 형식 HH:MM)", value="18:00", placeholder="예: 17:30"
 )
@@ -148,6 +188,7 @@ if admin_mode:
                 {
                     "기록ID": key,
                     "학생 이름": data.get("student_name"),
+                    "로그인ID": data.get("student_id"),
                     "응시 유닛": data.get("unit"),
                     "점수": data.get("score"),
                     "만점": data.get("total"),
@@ -180,7 +221,7 @@ if admin_mode:
 
         for key, res_data in subs.items():
             with st.expander(
-                f"👤 {res_data.get('student_name')} | 유닛: [{res_data.get('unit')}] | 점수: {res_data.get('score')} / {res_data.get('total')}점 | {res_data.get('timestamp', '')}"
+                f"👤 {res_data.get('student_name')} ({res_data.get('student_id')}) | 유닛: [{res_data.get('unit')}] | 점수: {res_data.get('score')} / {res_data.get('total')}점 | {res_data.get('timestamp', '')}"
             ):
                 df_res = pd.DataFrame(res_data["records"])
                 st.dataframe(df_res, use_container_width=True)
@@ -193,251 +234,270 @@ if admin_mode:
                         .encode("utf-8-sig")
                     )
                     st.download_button(
-                        label=f"📥 {res_data.get('student_name')} ({res_data.get('unit')}) 오답노트 다운로드",
+                        label=f"📥 {res_data.get('student_name')} 오답노트 다운로드",
                         data=csv_bytes,
                         file_name=f"오답노트_{res_data.get('student_name')}_{res_data.get('unit')}.csv",
                         key=f"dl_{key}",
                     )
     else:
         st.info(
-            "⏳ 아직 보관된 시험 기록이 없습니다. 학생들이 위성 랩탑으로 시험을 치르면 이곳에 영구 보관됩니다."
+            "⏳ 아직 보관된 시험 기록이 없습니다. 학생들이 로그인하여 시험을 치르면 이곳에 영구 보관됩니다."
         )
 
 
 # ==========================================
-# 📝 [학생 모드]: 위성 랩탑 응시 화면 (시계 기준 미니 타이머)
+# 📝 [학생 모드]: 위성 랩탑 로그인 및 맞춤 시험 응시
 # ==========================================
 else:
     st.markdown("---")
-    st.header("📝 학생 맞춤형 디지털 단어 시험 응시")
+    st.header("📝 학생 로그인 및 맞춤형 단어 시험 응시")
 
+    roster = st.session_state["student_roster"]
     answer_banks = st.session_state["answer_banks"]
-    if not answer_banks:
-        st.warning(
-            "⚠️ 아직 선생님이 등록한 시험지가 없습니다. 잠시만 기다려주세요!"
-        )
+
+    if not roster:
+        st.warning("⚠️ 아직 선생님이 학생 명단 파일을 등록하지 않았습니다. 잠시만 기다려주세요!")
+    elif not answer_banks:
+        st.warning("⚠️ 아직 선생님이 시험지 정답 파일을 등록하지 않았습니다. 잠시만 기다려주세요!")
     else:
-        col1, col2 = st.columns(2)
-        with col1:
-            student_name = st.text_input(
-                "이름을 입력하세요", placeholder="예: 김이안"
-            )
-        with col2:
-            selected_unit = st.selectbox(
-                "오늘 응시할 시험지(유닛)를 선택하세요",
-                options=list(answer_banks.keys()),
-            )
+        # 세션 내 로그인 상태 관리
+        if "logged_in_student" not in st.session_state:
+            st.session_state["logged_in_student"] = None
 
-        if student_name and selected_unit:
-            exam_key_state = f"exam_state_{student_name}_{selected_unit}"
+        # 로그인 전 화면
+        if not st.session_state["logged_in_student"]:
+            st.markdown("### 🔑 학원계정으로 로그인하세요")
+            col_l1, col_l2 = st.columns(2)
+            with col_l1:
+                input_id = st.text_input("아이디", placeholder="예: apple홍길동")
+            with col_l2:
+                input_pw = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
 
-            if exam_key_state not in st.session_state:
-                st.session_state[exam_key_state] = {
-                    "started": False,
-                    "submitted": False,
-                }
+            if st.button("🔓 로그인", type="primary"):
+                if input_id in roster and roster[input_id]["password"] == input_pw:
+                    st.session_state["logged_in_student"] = input_id
+                    st.success(f"환영합니다, {roster[input_id]['name']} 학생! 시험 화면으로 이동합니다.")
+                    time.sleep(0.8)
+                    st.rerun()
+                else:
+                    st.error("❌ 아이디 또는 비밀번호가 올바르지 않습니다.")
 
-            state = st.session_state[exam_key_state]
+        # 로그인 후 맞춤 시험 화면
+        else:
+            current_id = st.session_state["logged_in_student"]
+            student_info = roster[current_id]
+            student_name = student_info["name"]
+            assigned_unit = student_info["unit"]
 
-            # 1. 시험 시작 전 화면
-            if not state["started"] and not state["submitted"]:
-                st.markdown("---")
-                target_end_str = st.session_state["exam_settings"]["end_time_str"]
-                st.info(
-                    f"📌 **[{selected_unit}]** 시험 준비가 완료되었습니다.\n\n"
-                    f"• 문항 수: 총 {len(answer_banks[selected_unit])}문항\n"
-                    f"• 시험 마감 시각: **오후 {target_end_str}** (위성 랩탑 시계 기준)\n\n"
-                    "⚠️ [시험 시작하기]를 누르는 순간 우측 상단에 마감 시각까지의 카운트다운이 시작됩니다."
-                )
-                if st.button(
-                    "🚀 시험 시작하기", type="primary", use_container_width=True
-                ):
-                    state["started"] = True
+            # 로그아웃 버튼 (우측 상단)
+            top_c1, top_c2 = st.columns([4, 1])
+            with top_c1:
+                st.info(f"👤 접속 계정: **{student_name}** (`{current_id}`) | 배정된 시험지: **[{assigned_unit}]**")
+            with top_c2:
+                if st.button("🔒 로그아웃"):
+                    st.session_state["logged_in_student"] = None
                     st.rerun()
 
-            # 2. 시험 진행 중 (윈도우 시계 기준 목표 시각 카운트다운)
-            elif state["started"] and not state["submitted"]:
-                answer_dict = answer_banks[selected_unit]
-                target_end_str = st.session_state["exam_settings"]["end_time_str"]
+            # 배정된 유닛의 정답지가 업로드되어 있는지 확인
+            if assigned_unit not in answer_banks:
+                st.error(f"⚠️ 배정된 시험지 [{assigned_unit}]의 정답 파일이 아직 선생님 메인 랩탑에 등록되지 않았습니다. 선생님께 문의하세요!")
+            else:
+                answer_dict = answer_banks[assigned_unit]
+                exam_key_state = f"exam_state_{current_id}_{assigned_unit}"
 
-                # 현재 윈도우 랩탑 시스템 시각과 설정된 종료 시각 비교 계산
-                now = datetime.now()
-                try:
-                    target_hour, target_min = map(int, target_end_str.split(":"))
-                    target_time = now.replace(hour=target_hour, minute=target_min, second=0, microsecond=0)
-                    
-                    # 만약 설정 시간이 이미 지났거나 했다면 내일로 잡힐 수 있으므로 오늘 기준 초 계산
-                    remaining_time = int((target_time - now).total_seconds())
-                except Exception:
-                    remaining_time = 300  # 파싱 오류 시 안전장치 5분
-
-                # 마감 시각 초과 시 자동 제출 및 영구 저장
-                if remaining_time <= 0:
-                    state["submitted"] = True
-                    records = []
-                    correct_count = 0
-                    for q_num, c_ans in answer_dict.items():
-                        raw_ans = st.session_state.get(
-                            f"q_{selected_unit}_{q_num}", ""
-                        ).strip()
-                        norm_student = normalize_text(raw_ans)
-                        norm_correct = normalize_text(str(c_ans))
-
-                        if not raw_ans:
-                            is_correct = False
-                            reason = "미응답 (시간 종료)"
-                        elif norm_student == norm_correct:
-                            is_correct = True
-                            reason = "정답"
-                            correct_count += 1
-                        else:
-                            is_correct = False
-                            reason = f"오답 (작성: {raw_ans})"
-
-                        records.append(
-                            {
-                                "문항 번호": q_num,
-                                "학생 작성 답안": raw_ans
-                                if raw_ans
-                                else "(공란)",
-                                "교재 정답": str(c_ans),
-                                "정오답": is_correct,
-                                "사유": reason,
-                            }
-                        )
-
-                    record_id = f"{student_name}_{selected_unit}_{int(time.time())}"
-                    current_time_str = time.strftime(
-                        "%Y-%m-%d %H:%M:%S", time.localtime()
-                    )
-
-                    st.session_state["submissions"][record_id] = {
-                        "student_name": student_name,
-                        "unit": selected_unit,
-                        "score": correct_count,
-                        "total": len(answer_dict),
-                        "status": "마감 시각 도달 자동 제출",
-                        "timestamp": current_time_str,
-                        "records": records,
+                if exam_key_state not in st.session_state:
+                    st.session_state[exam_key_state] = {
+                        "started": False,
+                        "submitted": False,
                     }
-                    save_archive(st.session_state["submissions"])
-                    st.rerun()
 
-                # 우측 상단 시계 기준 미니 타이머 배치
-                st.markdown("---")
-                head_col1, head_col2 = st.columns([3, 1])
-                with head_col1:
-                    st.markdown(
-                        f"### ⌨️ [{selected_unit}] 응시 중 ({len(answer_dict)}문항)"
+                state = st.session_state[exam_key_state]
+
+                # 1. 시험 시작 전 안내 화면
+                if not state["started"] and not state["submitted"]:
+                    target_end_str = st.session_state["exam_settings"]["end_time_str"]
+                    st.markdown("---")
+                    st.info(
+                        f"📌 **[{assigned_unit}] 맞춤 단어 시험 준비 완료**\n\n"
+                        f"• 문항 수: 총 {len(answer_dict)}문항\n"
+                        f"• 시험 마감 시각: **오후 {target_end_str}** (랩탑 시계 기준)\n\n"
+                        "⚠️ [시험 시작하기]를 누르는 순간 우측 상단에 마감 시각까지의 카운트다운이 시작됩니다."
                     )
-                with head_col2:
-                    rem_mins = remaining_time // 60
-                    rem_secs = remaining_time % 60
-                    st.markdown(
-                        f"""
-                        <div style="background-color: #ff4b4b; padding: 8px 12px; border-radius: 8px; text-align: center; color: white; font-weight: bold; font-size: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                            ⏳ {target_end_str}까지<br>{rem_mins:02d}분 {rem_secs:02d}초 남음
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
+                    if st.button(
+                        "🚀 시험 시작하기", type="primary", use_container_width=True
+                    ):
+                        state["started"] = True
+                        st.rerun()
 
-                st.markdown("")
+                # 2. 시험 진행 중 (시계 기준 카운트다운 + 타이핑 입력)
+                elif state["started"] and not state["submitted"]:
+                    target_end_str = st.session_state["exam_settings"]["end_time_str"]
 
-                # 동적 타이핑 입력창 생성
-                student_inputs = {}
-                q_keys = sorted(
-                    answer_dict.keys(),
-                    key=lambda x: int(x) if x.isdigit() else 0,
-                )
+                    now = datetime.now()
+                    try:
+                        target_hour, target_min = map(int, target_end_str.split(":"))
+                        target_time = now.replace(hour=target_hour, minute=target_min, second=0, microsecond=0)
+                        remaining_time = int((target_time - now).total_seconds())
+                    except Exception:
+                        remaining_time = 300
 
-                cols = st.columns(2)
-                for i, q_num in enumerate(q_keys):
-                    target_col = cols[i % 2]
-                    with target_col:
-                        student_inputs[q_num] = st.text_input(
-                            f"{q_num}번 문항", key=f"q_{selected_unit}_{q_num}"
+                    # 마감 시각 초과 시 자동 제출
+                    if remaining_time <= 0:
+                        state["submitted"] = True
+                        records = []
+                        correct_count = 0
+                        for q_num, c_ans in answer_dict.items():
+                            raw_ans = st.session_state.get(
+                                f"q_{assigned_unit}_{q_num}", ""
+                            ).strip()
+                            norm_student = normalize_text(raw_ans)
+                            norm_correct = normalize_text(str(c_ans))
+
+                            if not raw_ans:
+                                is_correct = False
+                                reason = "미응답 (시간 종료)"
+                            elif norm_student == norm_correct:
+                                is_correct = True
+                                reason = "정답"
+                                correct_count += 1
+                            else:
+                                is_correct = False
+                                reason = f"오답 (작성: {raw_ans})"
+
+                            records.append(
+                                {
+                                    "문항 번호": q_num,
+                                    "학생 작성 답안": raw_ans if raw_ans else "(공란)",
+                                    "교재 정답": str(c_ans),
+                                    "정오답": is_correct,
+                                    "사유": reason,
+                                }
+                            )
+
+                        record_id = f"{current_id}_{assigned_unit}_{int(time.time())}"
+                        current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+                        st.session_state["submissions"][record_id] = {
+                            "student_id": current_id,
+                            "student_name": student_name,
+                            "unit": assigned_unit,
+                            "score": correct_count,
+                            "total": len(answer_dict),
+                            "status": "마감 시각 도달 자동 제출",
+                            "timestamp": current_time_str,
+                            "records": records,
+                        }
+                        save_archive(st.session_state["submissions"])
+                        st.rerun()
+
+                    # 우측 상단 미니 타이머 배너
+                    st.markdown("---")
+                    head_col1, head_col2 = st.columns([3, 1])
+                    with head_col1:
+                        st.markdown(f"### ⌨️ [{assigned_unit}] 응시 중 ({len(answer_dict)}문항)")
+                    with head_col2:
+                        rem_mins = remaining_time // 60
+                        rem_secs = remaining_time % 60
+                        st.markdown(
+                            f"""
+                            <div style="background-color: #ff4b4b; padding: 8px 12px; border-radius: 8px; text-align: center; color: white; font-weight: bold; font-size: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                                ⏳ {target_end_str}까지<br>{rem_mins:02d}분 {rem_secs:02d}초 남음
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
                         )
 
-                st.markdown("---")
-                if st.button(
-                    "🚀 답안 제출하기", type="primary", use_container_width=True
-                ):
-                    state["submitted"] = True
+                    st.markdown("")
 
-                    records = []
-                    correct_count = 0
-                    for q_num, c_ans in answer_dict.items():
-                        raw_ans = student_inputs.get(q_num, "").strip()
-                        norm_student = normalize_text(raw_ans)
-                        norm_correct = normalize_text(str(c_ans))
-
-                        if not raw_ans:
-                            is_correct = False
-                            reason = "미응답"
-                        elif norm_student == norm_correct:
-                            is_correct = True
-                            reason = "정답"
-                            correct_count += 1
-                        else:
-                            is_correct = False
-                            reason = f"오답 (작성: {raw_ans})"
-
-                        records.append(
-                            {
-                                "문항 번호": q_num,
-                                "학생 작성 답안": raw_ans
-                                if raw_ans
-                                else "(공란)",
-                                "교재 정답": str(c_ans),
-                                "정오답": is_correct,
-                                "사유": reason,
-                            }
-                        )
-
-                    record_id = f"{student_name}_{selected_unit}_{int(time.time())}"
-                    current_time_str = time.strftime(
-                        "%Y-%m-%d %H:%M:%S", time.localtime()
+                    # 답안 타이핑 입력 폼
+                    student_inputs = {}
+                    q_keys = sorted(
+                        answer_dict.keys(),
+                        key=lambda x: int(x) if x.isdigit() else 0,
                     )
 
-                    st.session_state["submissions"][record_id] = {
-                        "student_name": student_name,
-                        "unit": selected_unit,
-                        "score": correct_count,
-                        "total": len(answer_dict),
-                        "status": "정상 제출",
-                        "timestamp": current_time_str,
-                        "records": records,
-                    }
-                    save_archive(st.session_state["submissions"])
+                    cols = st.columns(2)
+                    for i, q_num in enumerate(q_keys):
+                        target_col = cols[i % 2]
+                        with target_col:
+                            student_inputs[q_num] = st.text_input(
+                                f"{q_num}번 문항", key=f"q_{assigned_unit}_{q_num}"
+                            )
+
+                    st.markdown("---")
+                    if st.button("🚀 답안 제출하기", type="primary", use_container_width=True):
+                        state["submitted"] = True
+
+                        records = []
+                        correct_count = 0
+                        for q_num, c_ans in answer_dict.items():
+                            raw_ans = student_inputs.get(q_num, "").strip()
+                            norm_student = normalize_text(raw_ans)
+                            norm_correct = normalize_text(str(c_ans))
+
+                            if not raw_ans:
+                                is_correct = False
+                                reason = "미응답"
+                            elif norm_student == norm_correct:
+                                is_correct = True
+                                reason = "정답"
+                                correct_count += 1
+                            else:
+                                is_correct = False
+                                reason = f"오답 (작성: {raw_ans})"
+
+                            records.append(
+                                {
+                                    "문항 번호": q_num,
+                                    "학생 작성 답안": raw_ans if raw_ans else "(공란)",
+                                    "교재 정답": str(c_ans),
+                                    "정오답": is_correct,
+                                    "사유": reason,
+                                }
+                            )
+
+                        record_id = f"{current_id}_{assigned_unit}_{int(time.time())}"
+                        current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+                        st.session_state["submissions"][record_id] = {
+                            "student_id": current_id,
+                            "student_name": student_name,
+                            "unit": assigned_unit,
+                            "score": correct_count,
+                            "total": len(answer_dict),
+                            "status": "정상 제출",
+                            "timestamp": current_time_str,
+                            "records": records,
+                        }
+                        save_archive(st.session_state["submissions"])
+                        st.rerun()
+
+                    time.sleep(1)
                     st.rerun()
 
-                time.sleep(1)
-                st.rerun()
+                # 3. 제출 완료 화면
+                elif state["submitted"]:
+                    user_subs = [
+                        v
+                        for v in st.session_state["submissions"].values()
+                        if v.get("student_id") == current_id
+                        and v.get("unit") == assigned_unit
+                    ]
+                    latest_sub = user_subs[-1] if user_subs else {}
 
-            # 3. 제출 완료 화면
-            elif state["submitted"]:
-                user_subs = [
-                    v
-                    for v in st.session_state["submissions"].values()
-                    if v.get("student_name") == student_name
-                    and v.get("unit") == selected_unit
-                ]
-                latest_sub = user_subs[-1] if user_subs else {}
-
-                st.balloons()
-                st.success(
-                    f"🎉 시험이 종료되었습니다! 내 점수: {latest_sub.get('score', 0)} / {latest_sub.get('total', 0)}점"
-                )
-
-                if latest_sub.get("status") == "마감 시각 도달 자동 제출":
-                    st.error("⏰ 시험 종료 시각이 되어 자동 마감 및 제출되었습니다.")
-
-                df_my_res = pd.DataFrame(latest_sub.get("records", []))
-                df_my_wrong = df_my_res[~df_my_res["정오답"]]
-                if not df_my_wrong.empty:
-                    st.markdown("#### ❌ 오답 리스트")
-                    st.dataframe(
-                        df_my_wrong[["문항 번호", "학생 작성 답안", "교재 정답"]],
-                        use_container_width=True,
+                    st.balloons()
+                    st.success(
+                        f"🎉 시험이 종료되었습니다! 내 점수: {latest_sub.get('score', 0)} / {latest_sub.get('total', 0)}점"
                     )
+
+                    if latest_sub.get("status") == "마감 시각 도달 자동 제출":
+                        st.error("⏰ 시험 종료 시각이 되어 자동 마감 및 제출되었습니다.")
+
+                    df_my_res = pd.DataFrame(latest_sub.get("records", []))
+                    df_my_wrong = df_my_res[~df_my_res["정오답"]]
+                    if not df_my_wrong.empty:
+                        st.markdown("#### ❌ 오답 리스트")
+                        st.dataframe(
+                            df_my_wrong[["문항 번호", "학생 작성 답안", "교재 정답"]],
+                            use_container_width=True,
+                        )
